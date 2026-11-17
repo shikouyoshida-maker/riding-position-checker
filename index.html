@@ -234,30 +234,54 @@ document.getElementById("ytClose").addEventListener("click", () => { ytFrame.src
 renderVids(document.getElementById("allVids"), ALL_VIDS);
 
 // ================= model loading (retryable) =================
+// AI files are served from this site's own /mp/ folder (copied in by the GitHub Pages workflow);
+// the public CDNs are only a fallback.
 const MP_VER = "0.10.14";
-const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
-const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
-const SEG_MODEL  = "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite";
-let loadP = null;
+const LOCAL = new URL("./mp/", location.href).href;
+const SOURCES = [
+  { name: "このサイト", base: LOCAL, wasm: LOCAL + "wasm", pose: LOCAL + "pose_landmarker_full.task", seg: LOCAL + "deeplab_v3.tflite" },
+  { name: "CDN", base: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/`, wasm: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}/wasm`,
+    pose: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+    seg: "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite" },
+];
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+let loadP = null, loadErr = "", loadStage = "";
+async function loadFrom(src) {
+  loadStage = `${src.name}からAIの本体を読み込み中`;
+  const { FilesetResolver, PoseLandmarker, ImageSegmenter } = await import(src.base + "vision_bundle.mjs");
+  const fileset = await FilesetResolver.forVisionTasks(src.wasm);
+  // iPhone/iPad: CPU first (GPU mode is unstable in iOS Safari); others: GPU first
+  const order = IS_IOS ? ["CPU", "GPU"] : ["GPU", "CPU"];
+  let pose = null, lastE = null;
+  loadStage = `${src.name}から姿勢のAIを読み込み中`;
+  for (const d of order) {
+    try { pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: src.pose, delegate: d }, runningMode: "IMAGE", numPoses: 1 }); break; }
+    catch (e) { lastE = e; }
+  }
+  if (!pose) throw lastE || new Error("pose");
+  loadStage = `${src.name}からバイク判別のAIを読み込み中`;
+  const seg = await ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: src.seg, delegate: "CPU" },
+    runningMode: "IMAGE", outputCategoryMask: true, outputConfidenceMasks: false });
+  const labels = seg.getLabels ? seg.getLabels() : [];
+  let bikeIdx = labels.findIndex(l => /motor/i.test(l)); if (bikeIdx < 0) bikeIdx = 14;
+  let personIdx = labels.findIndex(l => /person/i.test(l)); if (personIdx < 0) personIdx = 15;
+  return { pose, seg, bikeIdx, personIdx };
+}
 function startLoad() {
   if (loadP) return loadP;
   loadP = (async () => {
-    const { FilesetResolver, PoseLandmarker, ImageSegmenter } = await import(`${MP_BASE}/vision_bundle.mjs`);
-    const fileset = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
-    let pose;
-    try { pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate: "GPU" }, runningMode: "IMAGE", numPoses: 1 }); }
-    catch (e) { pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate: "CPU" }, runningMode: "IMAGE", numPoses: 1 }); }
-    const seg = await ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: SEG_MODEL, delegate: "CPU" },
-      runningMode: "IMAGE", outputCategoryMask: true, outputConfidenceMasks: false });
-    const labels = seg.getLabels ? seg.getLabels() : [];
-    let bikeIdx = labels.findIndex(l => /motor/i.test(l)); if (bikeIdx < 0) bikeIdx = 14;
-    let personIdx = labels.findIndex(l => /person/i.test(l)); if (personIdx < 0) personIdx = 15;
-    return { pose, seg, bikeIdx, personIdx };
-  })().catch(e => { console.warn(e); loadP = null; throw e; });
+    const errs = [];
+    for (const src of SOURCES) {
+      try { const m = await loadFrom(src); loadErr = ""; return m; }
+      catch (e) { console.warn(src.name, e); errs.push(`${src.name}: ${(e && e.message) || e}`); }
+    }
+    loadErr = errs.join(" ／ ");
+    throw new Error(loadErr);
+  })().catch(e => { loadP = null; throw e; });
   return loadP;
 }
-function loadModels(ms = 60000) {
-  const to = new Promise(r => setTimeout(() => r(null), ms));
+function loadModels(ms = 120000) {
+  const to = new Promise(r => setTimeout(() => { if (!loadErr) loadErr = `時間切れ（${Math.round(ms / 1000)}秒）：${loadStage}`; r(null); }, ms));
   return Promise.race([startLoad(), to]).catch(() => null);
 }
 
@@ -620,11 +644,13 @@ class View {
     const W = this.work.width, H = this.work.height;
     try {
       this.status("AIモデルを準備中…（初回は少し時間がかかります）");
+      const tick = setInterval(() => { if (loadStage && !this.pts) this.status(`AIモデルを準備中…（${loadStage}）`); }, 700);
       const m = await loadModels();
+      clearInterval(tick);
       if (gen !== this.gen) return;
       if (!m) {
         this.pts = this.spec.defaults(W, H); this.pts._guess = true; this.draw();
-        this.status("⚠️ AIモデルを読み込めませんでした。丸い点を手で合わせてください（角度は自動計算）。電波の良い所で🔄を押すと再挑戦します。");
+        this.status(`⚠️ AIモデルを読み込めませんでした。丸い点を手で合わせてください（角度は自動計算）。電波の良い所で🔄を押すと再挑戦します。［理由：${loadErr || "不明"}］`);
         return;
       }
       this.status("AIで検出中…");

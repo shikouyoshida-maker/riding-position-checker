@@ -93,7 +93,7 @@
   <!-- ===== 正面 ===== -->
   <section class="view" id="v-front">
     <div class="vhead">
-      <h2>正面から<span class="tag">リーン・鼻筋の位置</span></h2>
+      <h2>正面から<span class="tag">リーン・鼻頭の位置</span></h2>
       <label class="btn primary" for="f-front">📷 撮る／選ぶ</label>
       <input id="f-front" type="file" accept="image/*">
     </div>
@@ -109,7 +109,7 @@
     <div class="result" style="display:none">
       <div class="verdict">—</div>
       <div class="res">
-        <span class="k">鼻筋の位置</span><span data-r="nose">—</span>
+        <span class="k">鼻頭の位置</span><span data-r="nose">—</span>
         <span class="k">バイクのバンク角</span><span data-r="bike">—</span>
         <span class="k">上半身の角度</span><span data-r="body">—</span>
         <span class="k">頭（腰→鼻）の角度</span><span data-r="head">—</span>
@@ -127,10 +127,10 @@
       <div class="saveAsk" style="display:none"></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
-      <div class="legend"><span class="dot" style="background:var(--bike)"></span>バイク<span class="dot" style="background:var(--body)"></span>上半身（腰→肩）<span class="dot" style="background:var(--head)"></span>鼻筋<span class="dot" style="background:var(--ok)"></span>内側グリップ（点線＝理想の鼻筋の位置）</div>
+      <div class="legend"><span class="dot" style="background:var(--bike)"></span>バイク<span class="dot" style="background:var(--body)"></span>上半身（腰→肩）<span class="dot" style="background:var(--head)"></span>鼻頭<span class="dot" style="background:var(--ok)"></span>バンク側グリップ（緑の帯＝理想の鼻頭の位置）</div>
       <div class="theory">
         <b class="h">吉田流のおすすめ姿勢</b>
-        私のリーンウィズは、バイクと同じ角度より少しだけ内側。<b>内側のグリップの上に鼻筋がくる</b>ところが理想です。意識をお尻に集め、シートに体重がぐっと押しつけられる場所を探すと、遠心力と釣り合う位置に入れます。
+        私のリーンウィズは、バイクと同じ角度より少しだけ内側。<b>鼻頭がバンクしている側のグリップの中心にくる</b>ところが理想です。意識をお尻に集め、シートに体重がぐっと押しつけられる場所を探すと、遠心力と釣り合う位置に入れます。
       </div>
       <div class="vids" data-vids></div>
     </div>
@@ -532,8 +532,8 @@ class View {
     let h = '<span class="h">項目</span><span class="h">以前</span><span class="h">今回</span><span class="h">変化</span>';
     for (const [k, [pv, unit]] of Object.entries(this.prev.nums)) {
       const nv = now[k] ? now[k][0] : NaN;
-      const f = x => isFinite(x) ? x.toFixed(1) + unit : "—";
-      const d = nv - pv;
+      const f = x => typeof x === "number" && isFinite(x) ? x.toFixed(1) + unit : "—";
+      const d = (typeof pv === "number" && typeof nv === "number") ? nv - pv : NaN;
       h += `<span>${k}</span><span>${f(pv)}</span><span>${f(nv)}</span><span>${isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(1) : "—"}</span>`;
     }
     el.innerHTML = h;
@@ -711,6 +711,40 @@ function contactCentre(seg, idx) {
   for (let y = by; y >= Math.max(0, by - band); y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { n++; sx += x; }
   return n ? { x: (sx / n + .5) * seg.sx, y: (by + .5) * seg.sy } : null;
 }
+// fit x = a*y + b through the centres of the narrow tyre/fork band, from the contact patch up to stopY
+function forkCentreLine(seg, idx, cc, stopY) {
+  const { mask, w } = seg;
+  const y0 = Math.floor(cc.y / seg.sy) - 2, y1 = Math.max(0, Math.floor(stopY / seg.sy));
+  let cx = Math.floor(cc.x / seg.sx), widths = [], pts = [], wide = 0;
+  for (let y = y0; y >= y1; y--) {
+    const row = y * w; if (cx < 0 || cx >= w) break;
+    // find the run of bike pixels nearest the tracked centre
+    const hit = x => x >= 0 && x < w && mask[row + x] === idx;
+    let l = cx, r = cx;
+    if (!hit(cx)) {
+      let k = 1; while (k < w * .1 && !hit(cx - k) && !hit(cx + k)) k++;
+      if (k >= w * .1) continue;
+      l = r = hit(cx - k) ? cx - k : cx + k;
+    }
+    while (l > 0 && mask[row + l - 1] === idx) l--;
+    while (r < w - 1 && mask[row + r + 1] === idx) r++;
+    if (l <= 0 || r >= w - 1) break;             // clipped by the image edge
+    const wd = r - l + 1;
+    if (widths.length >= 4) {
+      const med = [...widths].sort((p, q) => p - q)[widths.length >> 1];
+      if (wd > med * 2.6) { if (++wide >= 3) break; continue; }   // fender / calipers / fairing
+      wide = 0;
+    }
+    widths.push(wd); const c = (l + r) / 2; pts.push({ x: (c + .5) * seg.sx, y: (y + .5) * seg.sy }); cx = Math.round(c);
+  }
+  if (pts.length < 4) return null;
+  let n = pts.length, sy = 0, sx = 0, syy = 0, sxy = 0;
+  for (const q of pts) { sy += q.y; sx += q.x; syy += q.y * q.y; sxy += q.x * q.y; }
+  const den = n * syy - sy * sy; if (Math.abs(den) < 1e-6) return null;
+  const a = (n * sxy - sx * sy) / den, b = (sx - a * sy) / n;
+  if (Math.abs(a) > Math.tan(60 * Math.PI / 180)) return null;
+  return { a, b, n };
+}
 // centre of the bike pixels on row y, searched between x0..x1 (canvas coords)
 function bikeRowCentre(seg, idx, y, x0, x1) {
   const my = Math.floor(y / seg.sy); if (my < 0 || my >= seg.h) return null;
@@ -741,12 +775,12 @@ function bikeAxisFromMask(seg, idx) {
 
 const FRONT = {
   name: "front",
-  nums: m => ({ "鼻筋の位置（100%が理想）": [m.ratio * 100, "%"], "バンク角": [Math.abs(m.bike), "°"],
+  nums: m => ({ "鼻頭のずれ（グリップ何個分・＋内側）": [m.d, "個"], "バンク角": [Math.abs(m.bike), "°"],
                 "上半身の角度": [Math.abs(m.body), "°"], "上半身とバイクの差（＋内側）": [m.diffIn, "°"] }),
   sampleSrc: "sample-front.jpg", anchors: ["bikeB", "bikeT"], mirrorCheck: "lean",
   mirrorSwap: [["gripL", "gripR"], ["hzL", "hzR"]],
   leanSign: p => Math.sign(Math.round(leanOf(p.bikeB, p.bikeT))),
-  cmp: m => `鼻筋 ${m.text.nose}／上半身とバイクの差 ${m.text.diff}`,
+  cmp: m => `鼻頭 ${m.text.nose}／上半身とバイクの差 ${m.text.diff}`,
   accent: () => C.bike,
   keys: v => ["bikeB", "bikeT", "hip", "shoulder", "nose", "gripL", "gripR"].concat(v.opt("useHorizon") ? ["hzL", "hzR"] : []),
   color: k => k.startsWith("bike") ? C.bike : k === "nose" ? C.head : k.startsWith("grip") || k.startsWith("hz") ? C.ok : C.body,
@@ -755,42 +789,47 @@ const FRONT = {
     gripL: { x: W * .35, y: H * .4 }, gripR: { x: W * .65, y: H * .4 },
     bikeB: { x: W * .5, y: H * .92 }, bikeT: { x: W * .5, y: H * .5 },
     hzL: { x: W * .15, y: H * .85 }, hzR: { x: W * .85, y: H * .85 } }),
-  onDrag(p, k) { if (k.startsWith("bike")) { p._guess = false; p._bikeEdited = true; } },
+  onDrag(p, k) { if (k.startsWith("bike")) { p._guess = false; p._bikeEdited = true; } if (k.startsWith("grip")) p._gripW = 0; },
   auto(W, H, P, seg, m, notes, opt) {
     const p = FRONT.defaults(W, H);
     const rear = !!(opt && opt("fromRear"));
     if (P) {
-      p.hip = mid(P(23), P(24)); p.shoulder = mid(P(11), P(12)); p.nose = P(0);
-      const a = P(15), b = P(16); // wrists = grips
-      if (a.x <= b.x) { p.gripL = a; p.gripR = b; } else { p.gripL = b; p.gripR = a; }
+      p.hip = mid(P(23), P(24)); p.shoulder = mid(P(11), P(12)); p.nose = P(0);   // 0 = nose tip
+      // grip centre = mean of wrist, pinky, index, thumb; grip width = spread of those points
+      const hand = ids => { const q = ids.map(P); const c = { x: q.reduce((t, r) => t + r.x, 0) / q.length, y: q.reduce((t, r) => t + r.y, 0) / q.length };
+        let w = 0; for (const r of q) for (const r2 of q) w = Math.max(w, dist(r, r2)); return { c, w }; };
+      const h1 = hand([15, 17, 19, 21]), h2 = hand([16, 18, 20, 22]);
+      const [L, R] = h1.c.x <= h2.c.x ? [h1, h2] : [h2, h1];
+      p.gripL = L.c; p.gripR = R.c;
+      p._gripW = Math.max(L.w, R.w, dist(L.c, R.c) * .1);
     }
-    // bottom = centre of the tyre contact patch; top = centre of the tank (front) / seat (rear)
-    const topName = rear ? "シートの中心" : "タンクの中心";
     const cc = seg && contactCentre(seg, m.bikeIdx);
     const ax = seg && bikeAxisFromMask(seg, m.bikeIdx);
-    let top = null;
-    if (P) {
-      const kL = P(25), kR = P(26), knee = mid(kL, kR), kneesOk = kL.v > .3 && kR.v > .3;
-      if (!rear && kneesOk) {
-        // the tank sits between the knees
-        top = (seg && bikeRowCentre(seg, m.bikeIdx, knee.y, kL.x, kR.x)) || { x: knee.x, y: knee.y };
-      } else {
-        // seat: just under the hips
-        const tl = dist(p.hip, p.shoulder) || H * .15;
-        const base = cc || (ax && ax.bottom);
-        const dn = base ? { x: (base.x - p.hip.x), y: (base.y - p.hip.y) } : { x: 0, y: 1 };
-        const dl = Math.hypot(dn.x, dn.y) || 1;
-        top = { x: p.hip.x + dn.x / dl * tl * .2, y: p.hip.y + dn.y / dl * tl * .2 };
-        if (!rear && !kneesOk) notes.push("膝が見えないため、上の点を仮の位置に置きました");
+    if (cc) p._groundY = cc.y;
+    let ok = false;
+    if (!rear && seg && cc) {
+      // front fork centre line: track the centre of the narrow tyre/fork band upward from the contact patch
+      const gripY = P ? (p.gripL.y + p.gripR.y) / 2 : cc.y - H * .35;
+      const fit = forkCentreLine(seg, m.bikeIdx, cc, gripY);
+      if (fit) {
+        // top bridge ≈ grip height on the fork centre line; axle ≈ 30% of the way up from the ground
+        const at = y => ({ x: fit.a * y + fit.b, y });
+        const topY = Math.min(gripY, cc.y - H * .08);
+        p.bikeT = at(topY); p.bikeB = at(cc.y - (cc.y - topY) * .3);
+        ok = true;
+        if (fit.n < 8) notes.push("フォークの線が短く、精度が低いかもしれません");
       }
     }
-    const bottom = cc || (ax && ax.bottom);
-    if (bottom && (top || ax)) {
-      p.bikeB = bottom; p.bikeT = top || ax.top;
-      if (dist(p.bikeB, p.bikeT) < H * .05) { p.bikeT = ax ? ax.top : { x: bottom.x, y: bottom.y - H * .3 }; }
-    } else {
-      notes.push(`バイクの傾きを取れませんでした。オレンジの点をタイヤの接地面の中心と${topName}に合わせてください`);
-      p.bikeB = { x: p.hip.x, y: H * .92 }; p.bikeT = { x: p.hip.x, y: p.hip.y }; p._guess = true;
+    if (!ok && rear && P && (cc || ax)) {
+      const base = cc || ax.bottom, tl = dist(p.hip, p.shoulder) || H * .15;
+      const dn = { x: base.x - p.hip.x, y: base.y - p.hip.y }, dl = Math.hypot(dn.x, dn.y) || 1;
+      p.bikeB = base; p.bikeT = { x: p.hip.x + dn.x / dl * tl * .2, y: p.hip.y + dn.y / dl * tl * .2 }; ok = true;
+    }
+    if (!ok && ax) { p.bikeB = ax.bottom; p.bikeT = ax.top; ok = true; notes.push("フォークを見分けられず、車体全体の傾きで仮置きしました。オレンジの点をアクスルと三つ叉の中心に合わせてください"); }
+    if (!ok) {
+      notes.push(rear ? "バイクの傾きを取れませんでした。オレンジの点をタイヤの接地面の中心とシートの中心に合わせてください"
+                      : "バイクの傾きを取れませんでした。オレンジの点をアクスルの中心と三つ叉の中心に合わせてください");
+      p.bikeB = { x: p.hip.x, y: H * .8 }; p.bikeT = { x: p.hip.x, y: H * .5 }; p._guess = true;
     }
     return p;
   },
@@ -805,47 +844,59 @@ const FRONT = {
     const fmt = a => Math.abs(a) < 0.5 ? "ほぼ垂直" : `${side(a)}へ ${Math.abs(a).toFixed(1)}°`;
     // lateral offsets perpendicular to the bike axis, measured toward the inside of the turn
     const L = dist(P.bikeB, P.bikeT) || 1, dx = (P.bikeT.x - P.bikeB.x) / L, dy = (P.bikeT.y - P.bikeB.y) / L;
-    const lx = -dy, ly = dx;                      // lateral unit (image-right when upright)
+    const lx = -dy, ly = dx;
     const off = q => ((q.x - P.bikeB.x) * lx + (q.y - P.bikeB.y) * ly) * s;
     const inner = (s > 0) ? P.gripR : P.gripL;    // the grip on the lean side
+    const gW = P._gripW || dist(P.gripL, P.gripR) * .12 || 1;
     const gIn = off(inner), nIn = off(P.nose);
+    const d = (nIn - gIn) / gW;                   // in grip widths, + = further inside
     const ratio = gIn > 1 ? nIn / gIn : NaN;
     let verdict, level = "warn", vids;
     const nearUp = Math.abs(bike) < 3;
     if (P._guess) { verdict = "オレンジの点をバイクに合わせてください"; vids = ["curve1", "curve2"]; }
     else if (nearUp) { verdict = "バイクがほぼ直立しています（コーナリング中の写真で判定します）"; vids = ["curve1", "curve3"]; }
-    else if (!isFinite(ratio)) { verdict = "緑の点を左右のグリップ（手首）に合わせてください"; vids = ["curve1"]; }
-    else if (ratio >= .8 && ratio <= 1.2) { verdict = "✅ 吉田流リーンウィズ：鼻筋が内側グリップの上にきています"; level = "good"; vids = ["curve2", "curve3"]; }
-    else if (ratio < .8) { verdict = nIn < 0 ? "鼻筋がバイクの中心より外側（リーンアウト）。もっと内側へ" : "鼻筋が内側グリップより外側。もう少し内側へ"; vids = ["curve1", "curve2"]; }
-    else { verdict = "鼻筋が内側グリップより内側に入りすぎ（リーンイン）"; vids = ["curve1", "curve3"]; }
-    const nosePct = isFinite(ratio) ? `グリップ位置の ${(ratio * 100).toFixed(0)}%（100%が理想）` : "—";
-    return { bike, body, head, tilt, inner, verdict, level, vids, guideSign: s, ratio, diffIn,
-      text: { nose: nosePct, bike: fmt(bike), body: fmt(body), head: fmt(head),
+    else if (gIn <= 1) { verdict = "緑の点を左右のグリップの中心に合わせてください"; vids = ["curve1"]; }
+    else if (Math.abs(d) <= .5) { verdict = "✅ 吉田流リーンウィズ：鼻頭がバンク側グリップの幅の中にあります"; level = "good"; vids = ["curve2", "curve3"]; }
+    else if (d < -.5) { verdict = nIn < 0 ? "鼻頭がバイクの中心より外側（リーンアウト）。もっと内側へ" : "鼻頭がバンク側グリップより外側。もう少し内側へ"; vids = ["curve1", "curve2"]; }
+    else { verdict = "鼻頭がバンク側グリップより内側に入りすぎ（リーンイン）"; vids = ["curve1", "curve3"]; }
+    const noseTxt = gIn > 1 ? (Math.abs(d) <= .5 ? `グリップの幅の中（中心から${d >= 0 ? "内側" : "外側"}へ ${Math.abs(d).toFixed(1)}個分）`
+                                                 : `グリップ中心から${d >= 0 ? "内側" : "外側"}へ グリップ${Math.abs(d).toFixed(1)}個分`) : "—";
+    return { bike, body, head, tilt, inner, verdict, level, vids, guideSign: s, ratio, diffIn, d, gW, lat: { lx, ly, dx, dy },
+      text: { nose: noseTxt, bike: fmt(bike), body: fmt(body), head: fmt(head),
               diff: nearUp ? "—" : `${Math.abs(diffIn).toFixed(1)}° ${diffIn >= 0 ? "内側" : "外側"}` } };
   },
   render(v, ctx, g, m) {
-    const P = v.pts, t = m.tilt * Math.PI / 180, len = v.cv.height * .7;
-    line(ctx, P.bikeB, { x: P.bikeB.x + Math.sin(t) * len, y: P.bikeB.y - Math.cos(t) * len }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
+    const P = v.pts, t = m.tilt * Math.PI / 180, len = v.cv.height * .7, rear = v.opt("fromRear");
+    // bike line: from the ground through the axle and the top bridge
+    const L = dist(P.bikeB, P.bikeT) || 1;
+    const gy = P._groundY != null ? P._groundY : P.bikeB.y + L * .45;
+    const kDown = (P.bikeT.y - P.bikeB.y) !== 0 ? (gy - P.bikeT.y) / (P.bikeB.y - P.bikeT.y) : 1.45;
+    const ground = extend(P.bikeT, P.bikeB, Math.max(1, Math.min(kDown, 3)));
+    line(ctx, ground, { x: ground.x + Math.sin(t) * len, y: ground.y - Math.cos(t) * len }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
     if (v.opt("useHorizon")) line(ctx, extend(P.hzL, P.hzR, -.2), extend(P.hzL, P.hzR, 1.2), C.ok, g.LW * .8);
-    line(ctx, extend(P.bikeB, P.bikeT, -.05), extend(P.bikeB, P.bikeT, 1.25), C.bike, g.LW);
+    line(ctx, ground, extend(P.bikeB, P.bikeT, 1.35), C.bike, g.LW);
     if (!g.exp) {
       const fs = Math.round(g.FS * .75);
-      label(ctx, "タイヤ接地面の中心", P.bikeB.x + g.R * 1.6, P.bikeB.y - g.R * .3, C.bike, fs);
-      label(ctx, v.opt("fromRear") ? "シートの中心" : "タンクの中心", P.bikeT.x + g.R * 1.6, P.bikeT.y + fs * .4, C.bike, fs);
+      label(ctx, rear ? "タイヤ接地面の中心" : "アクスルの中心", P.bikeB.x + g.R * 1.6, P.bikeB.y - g.R * .3, C.bike, fs);
+      label(ctx, rear ? "シートの中心" : "三つ叉の中心", P.bikeT.x + g.R * 1.6, P.bikeT.y + fs * .4, C.bike, fs);
     }
-    // ideal nose line: parallel to the bike axis through the inner grip
+    // ideal nose band: grip width, parallel to the bike axis through the lean-side grip centre
     const ax = { x: P.bikeT.x - P.bikeB.x, y: P.bikeT.y - P.bikeB.y }, al = Math.hypot(ax.x, ax.y) || 1;
-    const k = v.cv.height * .35 / al;
-    line(ctx, { x: m.inner.x - ax.x * k * .4, y: m.inner.y - ax.y * k * .4 }, { x: m.inner.x + ax.x * k, y: m.inner.y + ax.y * k }, C.ok, g.LW * .8, [g.LW * 1.5, g.LW]);
+    const k = v.cv.height * .4 / al, hw = m.gW / 2, lx = m.lat.lx, ly = m.lat.ly;
+    const a0 = { x: m.inner.x - ax.x * k * .2, y: m.inner.y - ax.y * k * .2 }, a1 = { x: m.inner.x + ax.x * k, y: m.inner.y + ax.y * k };
+    ctx.save(); ctx.fillStyle = "rgba(74,222,128,.18)"; ctx.beginPath();
+    ctx.moveTo(a0.x + lx * hw, a0.y + ly * hw); ctx.lineTo(a1.x + lx * hw, a1.y + ly * hw);
+    ctx.lineTo(a1.x - lx * hw, a1.y - ly * hw); ctx.lineTo(a0.x - lx * hw, a0.y - ly * hw); ctx.closePath(); ctx.fill(); ctx.restore();
+    line(ctx, a0, a1, C.ok, g.LW * .7, [g.LW * 1.5, g.LW]);
     line(ctx, P.gripL, P.gripR, "rgba(74,222,128,.5)", g.LW * .5);
     line(ctx, extend(P.hip, P.shoulder, -.6), extend(P.hip, P.shoulder, 1.4), C.body, g.LW);
     line(ctx, P.shoulder, P.nose, C.head, g.LW * .7, [g.LW * 1.6, g.LW]);
-    const bt = extend(P.bikeB, P.bikeT, 1.25), st = extend(P.hip, P.shoulder, 1.4);
+    const bt = extend(P.bikeB, P.bikeT, 1.35), st = extend(P.hip, P.shoulder, 1.4);
     label(ctx, `バイク ${Math.abs(m.bike).toFixed(1)}°`, bt.x + g.R, bt.y + g.FS, C.bike, g.FS);
     label(ctx, `上半身 ${Math.abs(m.body).toFixed(1)}°`, st.x + g.R, st.y, C.body, g.FS);
-    label(ctx, `鼻筋 ${m.text.nose.split("（")[0].replace("グリップ位置の ", "")}`, P.nose.x + g.R * 1.5, P.nose.y - g.R, C.head, g.FS);
+    label(ctx, Math.abs(m.d) <= .5 ? "鼻頭 ✅" : "鼻頭", P.nose.x + g.R * 1.5, P.nose.y - g.R, C.head, g.FS);
   },
-  summary: m => ["【正面】" + m.verdict.replace("✅ ", ""), `鼻筋 ${m.text.nose}`, `バイク ${m.text.bike}／上半身 ${m.text.body}`],
+  summary: m => ["【正面】" + m.verdict.replace("✅ ", ""), `鼻頭 ${m.text.nose}`, `バイク ${m.text.bike}／上半身 ${m.text.body}`],
 };
 
 // ================= SIDE =================

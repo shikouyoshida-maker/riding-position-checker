@@ -704,55 +704,29 @@ class View {
 // tyre contact centre: mean x of bike pixels in the lowest few rows of the bike mask
 function contactCentre(seg, idx) {
   const { mask, w, h } = seg;
-  let by = -1;
-  for (let y = h - 1; y >= 0 && by < 0; y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { by = y; break; }
+  let by = -1, bx = -1;
+  for (let y = h - 1; y >= 0 && by < 0; y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { by = y; bx = x; break; }
   if (by < 0) return null;
+  // only the connected run around the lowest pixel (ignore other bikes / noise on the same rows)
+  let l = bx, r = bx; while (l > 0 && mask[by * w + l - 1] === idx) l--; while (r < w - 1 && mask[by * w + r + 1] === idx) r++;
+  const pad = Math.max(2, Math.round((r - l) * 2)), xa = Math.max(0, l - pad), xb = Math.min(w - 1, r + pad);
   const band = Math.max(1, Math.round(h * .012));
   let n = 0, sx = 0;
-  for (let y = by; y >= Math.max(0, by - band); y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { n++; sx += x; }
-  return n ? { x: (sx / n + .5) * seg.sx, y: (by + .5) * seg.sy } : null;
-}
-// fit x = a*y + b through the centres of the narrow tyre/fork band, from the contact patch up to stopY
-function forkCentreLine(seg, idx, cc, stopY) {
-  const { mask, w } = seg;
-  const y0 = Math.floor(cc.y / seg.sy) - 2, y1 = Math.max(0, Math.floor(stopY / seg.sy));
-  let cx = Math.floor(cc.x / seg.sx), widths = [], pts = [], wide = 0;
-  for (let y = y0; y >= y1; y--) {
-    const row = y * w; if (cx < 0 || cx >= w) break;
-    // find the run of bike pixels nearest the tracked centre
-    const hit = x => x >= 0 && x < w && mask[row + x] === idx;
-    let l = cx, r = cx;
-    if (!hit(cx)) {
-      let k = 1; while (k < w * .1 && !hit(cx - k) && !hit(cx + k)) k++;
-      if (k >= w * .1) continue;
-      l = r = hit(cx - k) ? cx - k : cx + k;
-    }
-    while (l > 0 && mask[row + l - 1] === idx) l--;
-    while (r < w - 1 && mask[row + r + 1] === idx) r++;
-    if (l <= 0 || r >= w - 1) break;             // clipped by the image edge
-    const wd = r - l + 1;
-    if (widths.length >= 4) {
-      const med = [...widths].sort((p, q) => p - q)[widths.length >> 1];
-      if (wd > med * 2.6) { if (++wide >= 3) break; continue; }   // fender / calipers / fairing
-      wide = 0;
-    }
-    widths.push(wd); const c = (l + r) / 2; pts.push({ x: (c + .5) * seg.sx, y: (y + .5) * seg.sy }); cx = Math.round(c);
-  }
-  if (pts.length < 4) return null;
-  let n = pts.length, sy = 0, sx = 0, syy = 0, sxy = 0;
-  for (const q of pts) { sy += q.y; sx += q.x; syy += q.y * q.y; sxy += q.x * q.y; }
-  const den = n * syy - sy * sy; if (Math.abs(den) < 1e-6) return null;
-  const a = (n * sxy - sx * sy) / den, b = (sx - a * sy) / n;
-  if (Math.abs(a) > Math.tan(60 * Math.PI / 180)) return null;
-  return { a, b, n };
+  for (let y = by; y >= Math.max(0, by - band); y--) for (let x = xa; x <= xb; x++) if (mask[y * w + x] === idx) { n++; sx += x; }
+  return n ? { x: (sx / n + .5) * seg.sx, y: (by + .5) * seg.sy, cut: by >= h - 2 } : null;
 }
 // centre of the bike pixels on row y, searched between x0..x1 (canvas coords)
 function bikeRowCentre(seg, idx, y, x0, x1) {
+  // take the run of bike pixels nearest the knee midpoint, then grow it to its full width (the whole tank chord)
   const my = Math.floor(y / seg.sy); if (my < 0 || my >= seg.h) return null;
-  const a = Math.max(0, Math.floor(Math.min(x0, x1) / seg.sx)), b = Math.min(seg.w - 1, Math.ceil(Math.max(x0, x1) / seg.sx));
-  let n = 0, sx = 0;
-  for (let x = a; x <= b; x++) if (seg.mask[my * seg.w + x] === idx) { n++; sx += x; }
-  return n >= 2 ? { x: (sx / n + .5) * seg.sx, y } : null;
+  const row = my * seg.w, at = x => seg.mask[row + x] === idx;
+  const a = Math.max(0, Math.floor(Math.min(x0, x1) / seg.sx)), b = Math.min(seg.w - 1, Math.floor(Math.max(x0, x1) / seg.sx));
+  const mc = Math.round((a + b) / 2);
+  let st = -1;
+  for (let d = 0; d <= (b - a) / 2 + 1 && st < 0; d++) { if (mc - d >= a && at(mc - d)) st = mc - d; else if (mc + d <= b && at(mc + d)) st = mc + d; }
+  if (st < 0) return null;
+  let l = st, r = st; while (l > 0 && at(l - 1)) l--; while (r < seg.w - 1 && at(r + 1)) r++;
+  return r - l + 1 >= 2 ? { x: ((l + r) / 2 + .5) * seg.sx, y } : null;
 }
 function bikeAxisFromMask(seg, idx) {
   const { mask, w, h, sx: SX, sy: SY } = seg;
@@ -806,19 +780,18 @@ const FRONT = {
     }
     const cc = seg && contactCentre(seg, m.bikeIdx);
     const ax = seg && bikeAxisFromMask(seg, m.bikeIdx);
-    if (cc) p._groundY = cc.y;
+    if (cc) { p._groundY = cc.y; if (cc.cut) notes.push("タイヤが写真の下で切れています。接地面が写るように撮ると正確になります"); }
     let ok = false;
-    if (!rear && seg && cc) {
-      // front fork centre line: track the centre of the narrow tyre/fork band upward from the contact patch
-      const gripY = P ? (p.gripL.y + p.gripR.y) / 2 : cc.y - H * .35;
-      const fit = forkCentreLine(seg, m.bikeIdx, cc, gripY);
-      if (fit) {
-        // top bridge ≈ grip height on the fork centre line; axle ≈ 30% of the way up from the ground
-        const at = y => ({ x: fit.a * y + fit.b, y });
-        const topY = Math.min(gripY, cc.y - H * .08);
-        p.bikeT = at(topY); p.bikeB = at(cc.y - (cc.y - topY) * .3);
-        ok = true;
-        if (fit.n < 8) notes.push("フォークの線が短く、精度が低いかもしれません");
+    if (!rear && seg && cc && P) {
+      // tank centre: average centre of the bike pixels between the knees, on a few rows around knee height
+      const kL = P(25), kR = P(26);
+      if (kL.v > .3 && kR.v > .3) {
+        const ky = (kL.y + kR.y) / 2, x0 = Math.min(kL.x, kR.x), x1 = Math.max(kL.x, kR.x);
+        let n = 0, sx = 0, sy = 0;
+        for (let y = ky - H * .04; y <= ky + H * .01; y += Math.max(1, seg.sy)) {
+          const c = bikeRowCentre(seg, m.bikeIdx, y, x0, x1); if (c) { n++; sx += c.x; sy += c.y; }
+        }
+        if (n >= 2 && cc.y - sy / n > H * .08) { p.bikeB = cc; p.bikeT = { x: sx / n, y: sy / n }; ok = true; }
       }
     }
     if (!ok && rear && P && (cc || ax)) {
@@ -826,10 +799,12 @@ const FRONT = {
       const dn = { x: base.x - p.hip.x, y: base.y - p.hip.y }, dl = Math.hypot(dn.x, dn.y) || 1;
       p.bikeB = base; p.bikeT = { x: p.hip.x + dn.x / dl * tl * .2, y: p.hip.y + dn.y / dl * tl * .2 }; ok = true;
     }
-    if (!ok && ax) { p.bikeB = ax.bottom; p.bikeT = ax.top; ok = true; notes.push("フォークを見分けられず、車体全体の傾きで仮置きしました。オレンジの点をアクスルと三つ叉の中心に合わせてください"); }
+    if (!ok && ax) { p.bikeB = cc || ax.bottom; p.bikeT = ax.top; ok = true;
+      notes.push(rear ? "車体全体の傾きで仮置きしました。オレンジの点をタイヤの接地面の中心とシートの中心に合わせてください"
+                      : "タンクが隠れていて見つけられず、車体全体の傾きで仮置きしました。上のオレンジの点をタンクの中心に合わせてください"); }
     if (!ok) {
       notes.push(rear ? "バイクの傾きを取れませんでした。オレンジの点をタイヤの接地面の中心とシートの中心に合わせてください"
-                      : "バイクの傾きを取れませんでした。オレンジの点をアクスルの中心と三つ叉の中心に合わせてください");
+                      : "バイクの傾きを取れませんでした。オレンジの点をタイヤの接地面の中心とタンクの中心に合わせてください");
       p.bikeB = { x: p.hip.x, y: H * .8 }; p.bikeT = { x: p.hip.x, y: H * .5 }; p._guess = true;
     }
     return p;
@@ -870,16 +845,16 @@ const FRONT = {
     const P = v.pts, t = m.tilt * Math.PI / 180, len = v.cv.height * .7, rear = v.opt("fromRear");
     // bike line: from the ground through the axle and the top bridge
     const L = dist(P.bikeB, P.bikeT) || 1;
-    const gy = P._groundY != null ? P._groundY : P.bikeB.y + L * .45;
-    const kDown = (P.bikeT.y - P.bikeB.y) !== 0 ? (gy - P.bikeT.y) / (P.bikeB.y - P.bikeT.y) : 1.45;
+    const gy = P._groundY != null ? P._groundY : P.bikeB.y;   // bikeB is the contact point
+    const kDown = (P.bikeT.y - P.bikeB.y) !== 0 ? (gy - P.bikeT.y) / (P.bikeB.y - P.bikeT.y) : 1;
     const ground = extend(P.bikeT, P.bikeB, Math.max(1, Math.min(kDown, 3)));
     line(ctx, ground, { x: ground.x + Math.sin(t) * len, y: ground.y - Math.cos(t) * len }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
     if (v.opt("useHorizon")) line(ctx, extend(P.hzL, P.hzR, -.2), extend(P.hzL, P.hzR, 1.2), C.ok, g.LW * .8);
     line(ctx, ground, extend(P.bikeB, P.bikeT, 1.35), C.bike, g.LW);
     if (!g.exp) {
       const fs = Math.round(g.FS * .75);
-      label(ctx, rear ? "タイヤ接地面の中心" : "アクスルの中心", P.bikeB.x + g.R * 1.6, P.bikeB.y - g.R * .3, C.bike, fs);
-      label(ctx, rear ? "シートの中心" : "三つ叉の中心", P.bikeT.x + g.R * 1.6, P.bikeT.y + fs * .4, C.bike, fs);
+      label(ctx, "タイヤ接地面の中心", P.bikeB.x + g.R * 1.6, P.bikeB.y - g.R * .3, C.bike, fs);
+      label(ctx, rear ? "シートの中心" : "タンクの中心", P.bikeT.x + g.R * 1.6, P.bikeT.y + fs * .4, C.bike, fs);
     }
     // ideal nose band: grip width, parallel to the bike axis through the lean-side grip centre
     const ax = { x: P.bikeT.x - P.bikeB.x, y: P.bikeT.y - P.bikeB.y }, al = Math.hypot(ax.x, ax.y) || 1;

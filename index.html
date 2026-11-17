@@ -64,6 +64,8 @@
   .recBar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; position:sticky; top:0; background:var(--panel); padding:2px 0 6px; z-index:1; }
   .recBar .note { flex:1; min-width:120px; }
   button.danger { background:#4a2228; color:#ffb4b4; }
+  .saveAsk { background:#1f3326; border-radius:10px; padding:10px; font-size:14px; line-height:1.6; margin-top:8px; }
+  button.primaryBtn { background:var(--ok); color:#0b1a10; }
   .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
   .prevBox { margin-top:8px; }
   .curLabel { font-size:13px; font-weight:800; color:var(--body); margin:4px 2px 0; }
@@ -119,6 +121,8 @@
         <div class="note cmpText"></div>
       </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button></div>
+      <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK</button></div>
+      <div class="saveAsk" style="display:none"></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
       <div class="legend"><span class="dot" style="background:var(--bike)"></span>バイク<span class="dot" style="background:var(--body)"></span>上半身（腰→肩）<span class="dot" style="background:var(--head)"></span>鼻筋<span class="dot" style="background:var(--ok)"></span>内側グリップ（点線＝理想の鼻筋の位置）</div>
@@ -163,6 +167,8 @@
         <div class="note cmpText"></div>
       </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button><button class="swap">↔ 前後を入れ替え</button></div>
+      <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK</button></div>
+      <div class="saveAsk" style="display:none"></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
       <div class="legend"><span class="dot" style="background:var(--tri)"></span>接地点と頭頂の三角<span class="dot" style="background:var(--sac)"></span>仙骨の向き<span class="dot" style="background:var(--ok)"></span>背中のライン<span class="dot" style="background:var(--body)"></span>上半身<span class="dot" style="background:var(--head)"></span>目線</div>
@@ -338,7 +344,7 @@ const Store = {
   },
   async add(rec) {
     const db = await this.open();
-    if (!db) { this.mem.push(rec); return; }
+    if (!db) { this.mem = this.mem.filter(r => r.id !== rec.id); this.mem.push(rec); return; }
     await new Promise((res, rej) => { const t = db.transaction("recs", "readwrite"); t.objectStore("recs").put(rec); t.oncomplete = res; t.onerror = rej; });
   },
   async list(view) {
@@ -368,8 +374,17 @@ class View {
     this.input.addEventListener("change", e => this.onFile(e));
     this.sec.querySelector(".redetect").addEventListener("click", () => this.detect());
     const sw = this.sec.querySelector(".swap");
-    if (sw) sw.addEventListener("click", () => { if (this.pts && spec.swap) { spec.swap(this.pts); hideOut(); this.draw(); this.scheduleSave(); } });
-    this.sec.querySelectorAll("input[type=checkbox]").forEach(c => c.addEventListener("change", () => { this.draw(); if (!c.classList.contains("overlay")) this.scheduleSave(); }));
+    if (sw) sw.addEventListener("click", () => { if (this.pts && spec.swap) { spec.swap(this.pts); hideOut(); this.draw(); this.markDirty(); } });
+    this.sec.querySelectorAll("input[type=checkbox]").forEach(c => c.addEventListener("change", () => {
+      if (c.classList.contains("fromRear") && this.pts) {
+        const d = this._det;
+        if (d && !this.pts._bikeEdited) {
+          const np = this.spec.auto(d.W, d.H, d.pose, d.seg, d.m, [], k => this.opt(k));
+          this.pts.bikeB = np.bikeB; this.pts.bikeT = np.bikeT; this.pts._guess = np._guess;
+        }
+        this.draw(); this.markDirty(); return;
+      }
+      this.draw(); if (!c.classList.contains("overlay")) this.markDirty(); }));
     this.sample = null; this.sampleState = "none";
     this.sec.querySelector(".overlay").addEventListener("change", e => {
       this.sec.querySelector(".oprow").style.display = e.target.checked ? "flex" : "none";
@@ -377,7 +392,8 @@ class View {
     });
     this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
     this.prev = null;
-    this.recId = null; this.saveTimer = 0;
+    this.recId = null; this.savedOnce = false; this.dirty = false;
+    this.sec.querySelector(".okBtn").addEventListener("click", () => this.askSave());
     this.sec.querySelector(".closePrev").addEventListener("click", () => this.hidePrev());
     this.sec.querySelector(".cmpPrev").addEventListener("click", () => this.toggleList());
     // touch: block scrolling only when the finger starts on a handle
@@ -391,12 +407,37 @@ class View {
   status(t) { this.statusEl.textContent = t; }
   cmpText(t) { this.sec.querySelector(".cmpText").textContent = t; }
   // ---- 履歴 ----
-  scheduleSave() {
-    clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => this.record(), 1200);
+  // 保存は「✅ 角度OK」→「保存する」を押したときだけ
+  markDirty() {
+    if (!this.pts) return;
+    this.dirty = true;
+    this.sec.querySelector(".okRow").style.display = "flex";
+    this.sec.querySelector(".okBtn").textContent = this.savedOnce ? "✅ 角度OK（変更を保存）" : "✅ 角度OK";
+    this.sec.querySelector(".saveAsk").style.display = "none";
+  }
+  askSave() {
+    const box = this.sec.querySelector(".saveAsk"); box.style.display = "block"; box.innerHTML = "";
+    const t = document.createElement("div");
+    t.textContent = this.savedOnce ? "変更を保存しますか？（前に保存した記録を上書きします）" : "この写真と角度を保存しますか？";
+    const row = document.createElement("div"); row.className = "row";
+    const yes = document.createElement("button"); yes.className = "primaryBtn"; yes.textContent = "💾 保存する";
+    const no = document.createElement("button"); no.textContent = "保存しない";
+    yes.addEventListener("click", async () => {
+      yes.disabled = true;
+      const id = this.recId; this.dirty = false;
+      const ok = await this.record();
+      if (this.recId !== id) return;                 // a new photo was loaded meanwhile
+      if (!ok) { yes.disabled = false; this.dirty = true; return; }
+      this.savedOnce = true; box.style.display = "none";
+      if (!this.dirty) this.sec.querySelector(".okRow").style.display = "none";
+      else this.markDirty();
+    });
+    no.addEventListener("click", () => { box.style.display = "none"; this.status("保存しませんでした。点を直してから、もう一度「✅ 角度OK」を押せます。"); });
+    row.append(yes, no); box.append(t, row);
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   async record() {
-    if (!this.pts || !this.last || !this.recId) return;
+    if (!this.pts || !this.last || !this.recId) return false;
     this.draw(true);
     const k = Math.min(1, 900 / this.cv.width), c = document.createElement("canvas");
     c.width = Math.round(this.cv.width * k); c.height = Math.round(this.cv.height * k);
@@ -404,11 +445,10 @@ class View {
     const img = c.toDataURL("image/jpeg", .82);
     this.draw();
     const rec = { id: this.recId, view: this.spec.name, img, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
-    try { await Store.add(rec); this.savedNote = Store.db ? "💾 このiPhoneに自動保存しました" : "💾 一時保存しました（この画面を閉じると消えます）"; }
-    catch (e) { console.warn(e); this.savedNote = "⚠️ 自動保存できませんでした"; }
-    const st = this.statusEl.textContent.replace(/\s*💾.*$|\s*⚠️ 自動保存.*$/, "");
-    this.status((st ? st + "　" : "") + this.savedNote);
+    try { await Store.add(rec); this.status(Store.db ? `💾 ${fmtDate(rec.id)} の記録としてこのiPhoneに保存しました。` : "💾 一時保存しました（この画面を閉じると消えます）。"); }
+    catch (e) { console.warn(e); this.status("⚠️ 保存できませんでした。"); return false; }
     if (this.sec.querySelector(".recList").style.display !== "none") this.renderList();
+    return true;
   }
   async toggleList() {
     const el = this.sec.querySelector(".recList");
@@ -418,7 +458,7 @@ class View {
   async renderList() {
     const el = this.sec.querySelector(".recList"); el.innerHTML = "";
     const recs = (await Store.list(this.spec.name)).filter(r => r.id !== this.recId);
-    if (!recs.length) { this.selMode = false; el.innerHTML = '<div class="note">まだ以前の記録がありません。解析した結果は自動で保存され、次に写真を読み込んだときにここに並びます。</div>'; return; }
+    if (!recs.length) { this.selMode = false; el.innerHTML = '<div class="note">まだ以前の記録がありません。「✅ 角度OK」→「保存する」で保存した結果が、ここに並びます。</div>'; return; }
     if (!this.sel) this.sel = new Set();
     for (const id of [...this.sel]) if (!recs.some(r => r.id === id)) this.sel.delete(id);
     // toolbar
@@ -560,7 +600,8 @@ class View {
       this.work.height = this.cv.height = Math.round(im.naturalHeight * k);
       this.wctx.drawImage(im, 0, 0, this.work.width, this.work.height);
       URL.revokeObjectURL(url);
-      this.loaded = true; this.pts = null; this.recId = Date.now(); updateSave();
+      this.loaded = true; this.pts = null; this.recId = Date.now(); this.savedOnce = false; this.dirty = false;
+      this.sec.querySelector(".okRow").style.display = "none"; this.sec.querySelector(".saveAsk").style.display = "none"; updateSave();
       this.sec.querySelector(".placeholder").style.display = "none";
       this.cv.style.display = "block";
       hideOut(); this.draw();
@@ -591,7 +632,8 @@ class View {
       try { pose = runPose(m, this.work); if (!pose) notes.push("ライダーが見つかりませんでした"); }
       catch (e) { console.warn(e); notes.push("ライダーの検出に失敗"); }
       try { seg = runSeg(m, this.work); } catch (e) { console.warn(e); notes.push("輪郭の検出に失敗"); }
-      this.pts = this.spec.auto(W, H, pose, seg, m, notes);
+      this._det = { W, H, pose, seg, m };
+      this.pts = this.spec.auto(W, H, pose, seg, m, notes, k => this.opt(k));
       this.draw();
       this.status(notes.length ? `✅ 検出しました（${notes.join("／")}）。ずれていたら点をドラッグしてください。`
                                : "✅ 自動で角度ラインを入れました。ずれていたら点をドラッグしてください。");
@@ -600,7 +642,7 @@ class View {
       if (!this.pts) this.pts = this.spec.defaults(W, H);
       this.draw();
       this.status("⚠️ 自動検出でエラーが起きました。丸い点を手で合わせてください。");
-    } finally { if (gen === this.gen) { btn.disabled = false; this.scheduleSave(); } updateSave(); }
+    } finally { if (gen === this.gen) { btn.disabled = false; this.markDirty(); } updateSave(); }
   }
   toCanvas(e) {
     const r = this.cv.getBoundingClientRect();
@@ -623,7 +665,7 @@ class View {
     const p = this.toCanvas(e);
     this.pts[this.drag] = { x: Math.max(0, Math.min(this.cv.width, p.x)), y: Math.max(0, Math.min(this.cv.height, p.y)) };
     if (this.spec.onDrag) this.spec.onDrag(this.pts, this.drag);
-    hideOut(); this.scheduleSave();
+    hideOut(); this.markDirty();
     if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
   }
   draw(forExport) {
@@ -656,6 +698,25 @@ class View {
 }
 
 // ================= FRONT =================
+// tyre contact centre: mean x of bike pixels in the lowest few rows of the bike mask
+function contactCentre(seg, idx) {
+  const { mask, w, h } = seg;
+  let by = -1;
+  for (let y = h - 1; y >= 0 && by < 0; y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { by = y; break; }
+  if (by < 0) return null;
+  const band = Math.max(1, Math.round(h * .012));
+  let n = 0, sx = 0;
+  for (let y = by; y >= Math.max(0, by - band); y--) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { n++; sx += x; }
+  return n ? { x: (sx / n + .5) * seg.sx, y: (by + .5) * seg.sy } : null;
+}
+// centre of the bike pixels on row y, searched between x0..x1 (canvas coords)
+function bikeRowCentre(seg, idx, y, x0, x1) {
+  const my = Math.floor(y / seg.sy); if (my < 0 || my >= seg.h) return null;
+  const a = Math.max(0, Math.floor(Math.min(x0, x1) / seg.sx)), b = Math.min(seg.w - 1, Math.ceil(Math.max(x0, x1) / seg.sx));
+  let n = 0, sx = 0;
+  for (let x = a; x <= b; x++) if (seg.mask[my * seg.w + x] === idx) { n++; sx += x; }
+  return n >= 2 ? { x: (sx / n + .5) * seg.sx, y } : null;
+}
 function bikeAxisFromMask(seg, idx) {
   const { mask, w, h, sx: SX, sy: SY } = seg;
   const step = Math.max(1, Math.round(Math.min(w, h) / 400));
@@ -692,18 +753,43 @@ const FRONT = {
     gripL: { x: W * .35, y: H * .4 }, gripR: { x: W * .65, y: H * .4 },
     bikeB: { x: W * .5, y: H * .92 }, bikeT: { x: W * .5, y: H * .5 },
     hzL: { x: W * .15, y: H * .85 }, hzR: { x: W * .85, y: H * .85 } }),
-  onDrag(p, k) { if (k.startsWith("bike")) p._guess = false; },
-  auto(W, H, P, seg, m, notes) {
+  onDrag(p, k) { if (k.startsWith("bike")) { p._guess = false; p._bikeEdited = true; } },
+  auto(W, H, P, seg, m, notes, opt) {
     const p = FRONT.defaults(W, H);
+    const rear = !!(opt && opt("fromRear"));
     if (P) {
       p.hip = mid(P(23), P(24)); p.shoulder = mid(P(11), P(12)); p.nose = P(0);
       const a = P(15), b = P(16); // wrists = grips
       if (a.x <= b.x) { p.gripL = a; p.gripR = b; } else { p.gripL = b; p.gripR = a; }
     }
-    const b = seg && bikeAxisFromMask(seg, m.bikeIdx);
-    if (b) { p.bikeB = b.bottom; p.bikeT = b.top; if (b.elong < 1.5) notes.push("バイクの形がはっきりせず精度が低いかもしれません"); }
-    else { notes.push("バイクの傾きを取れませんでした。オレンジの点をタイヤの接地点と車体の中心に合わせてください");
-           p.bikeB = { x: p.hip.x, y: H * .92 }; p.bikeT = { x: p.hip.x, y: p.hip.y }; p._guess = true; }
+    // bottom = centre of the tyre contact patch; top = centre of the tank (front) / seat (rear)
+    const topName = rear ? "シートの中心" : "タンクの中心";
+    const cc = seg && contactCentre(seg, m.bikeIdx);
+    const ax = seg && bikeAxisFromMask(seg, m.bikeIdx);
+    let top = null;
+    if (P) {
+      const kL = P(25), kR = P(26), knee = mid(kL, kR), kneesOk = kL.v > .3 && kR.v > .3;
+      if (!rear && kneesOk) {
+        // the tank sits between the knees
+        top = (seg && bikeRowCentre(seg, m.bikeIdx, knee.y, kL.x, kR.x)) || { x: knee.x, y: knee.y };
+      } else {
+        // seat: just under the hips
+        const tl = dist(p.hip, p.shoulder) || H * .15;
+        const base = cc || (ax && ax.bottom);
+        const dn = base ? { x: (base.x - p.hip.x), y: (base.y - p.hip.y) } : { x: 0, y: 1 };
+        const dl = Math.hypot(dn.x, dn.y) || 1;
+        top = { x: p.hip.x + dn.x / dl * tl * .2, y: p.hip.y + dn.y / dl * tl * .2 };
+        if (!rear && !kneesOk) notes.push("膝が見えないため、上の点を仮の位置に置きました");
+      }
+    }
+    const bottom = cc || (ax && ax.bottom);
+    if (bottom && (top || ax)) {
+      p.bikeB = bottom; p.bikeT = top || ax.top;
+      if (dist(p.bikeB, p.bikeT) < H * .05) { p.bikeT = ax ? ax.top : { x: bottom.x, y: bottom.y - H * .3 }; }
+    } else {
+      notes.push(`バイクの傾きを取れませんでした。オレンジの点をタイヤの接地面の中心と${topName}に合わせてください`);
+      p.bikeB = { x: p.hip.x, y: H * .92 }; p.bikeT = { x: p.hip.x, y: p.hip.y }; p._guess = true;
+    }
     return p;
   },
   measure(v) {
@@ -740,6 +826,11 @@ const FRONT = {
     line(ctx, P.bikeB, { x: P.bikeB.x + Math.sin(t) * len, y: P.bikeB.y - Math.cos(t) * len }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
     if (v.opt("useHorizon")) line(ctx, extend(P.hzL, P.hzR, -.2), extend(P.hzL, P.hzR, 1.2), C.ok, g.LW * .8);
     line(ctx, extend(P.bikeB, P.bikeT, -.05), extend(P.bikeB, P.bikeT, 1.25), C.bike, g.LW);
+    if (!g.exp) {
+      const fs = Math.round(g.FS * .75);
+      label(ctx, "タイヤ接地面の中心", P.bikeB.x + g.R * 1.6, P.bikeB.y - g.R * .3, C.bike, fs);
+      label(ctx, v.opt("fromRear") ? "シートの中心" : "タンクの中心", P.bikeT.x + g.R * 1.6, P.bikeT.y + fs * .4, C.bike, fs);
+    }
     // ideal nose line: parallel to the bike axis through the inner grip
     const ax = { x: P.bikeT.x - P.bikeB.x, y: P.bikeT.y - P.bikeB.y }, al = Math.hypot(ax.x, ax.y) || 1;
     const k = v.cv.height * .35 / al;

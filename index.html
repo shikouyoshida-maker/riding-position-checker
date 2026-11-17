@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ポジションチェッカー">
+<link rel="apple-touch-icon" href="logo.png">
+<title>ライディングポジションチェッカー</title>
+<style>
+  :root { --bg:#0f1115; --panel:#1a1d24; --panel2:#232733; --text:#e8eaf0; --sub:#9aa0ad;
+          --bike:#ff8a1f; --body:#27d3ff; --head:#b98cff; --tri:#ffe14d; --ok:#4ade80; --ng:#ff6b6b; --sac:#ff5fa2; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:12px 14px 4px; max-width:900px; margin:0 auto; }
+  #logo { height:46px; width:auto; max-width:150px; object-fit:contain; }
+  header h1 { font-size:17px; margin:0; line-height:1.3; }
+  header p { margin:2px 0 0; color:var(--sub); font-size:12px; }
+  main { padding:4px 12px 40px; max-width:900px; margin:0 auto; }
+  section.view { background:var(--panel); border-radius:14px; padding:10px; margin-top:12px; }
+  .vhead { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+  .vhead h2 { font-size:16px; margin:0; }
+  .tag { font-size:11px; color:#111; background:var(--bike); border-radius:6px; padding:2px 6px; margin-left:6px; vertical-align:middle; }
+  .tag.side { background:var(--body); }
+  button, label.btn { appearance:none; border:0; border-radius:10px; padding:10px 13px; font-size:14px; font-weight:700; background:#2b303b; color:var(--text); cursor:pointer; white-space:nowrap; }
+  label.btn.primary { background:var(--bike); color:#111; }
+  button:disabled { opacity:.4; }
+  input[type=file] { display:none; }
+  .stage { position:relative; background:#000; border-radius:10px; overflow:hidden; min-height:120px; display:flex; align-items:center; justify-content:center; }
+  .placeholder { color:var(--sub); font-size:13px; padding:40px 10px; text-align:center; line-height:1.6; }
+  canvas { display:none; width:100%; height:auto; }
+  .status { font-size:12px; color:var(--sub); min-height:16px; margin:6px 2px; }
+  .verdict { font-size:18px; font-weight:800; margin:6px 0; line-height:1.4; }
+  .verdict.good { color:var(--ok); } .verdict.warn { color:var(--tri); }
+  .res { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:14px; align-items:baseline; }
+  .res .k { color:var(--sub); font-size:12px; }
+  .chk { display:flex; align-items:center; gap:8px; font-size:13px; margin-top:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .legend { font-size:11px; color:var(--sub); line-height:1.7; margin-top:6px; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin:0 3px 0 8px; vertical-align:middle; }
+  .theory { background:var(--panel2); border-radius:10px; padding:10px 12px; margin-top:10px; font-size:13px; line-height:1.7; }
+  .theory b.h { display:block; font-size:13px; color:var(--tri); margin-bottom:2px; }
+  .vids { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+  .vid { display:flex; align-items:center; gap:10px; background:#2b303b; border-radius:10px; padding:9px 11px; font-size:13px; font-weight:700; color:var(--text); text-align:left; white-space:normal; }
+  .vid::before { content:"▶"; color:#ff3b3b; font-size:15px; }
+  #outImg { width:100%; border-radius:10px; margin-top:10px; display:none; }
+  .note { font-size:12px; color:var(--sub); line-height:1.6; }
+  .footer { margin-top:14px; }
+  #player { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:10; padding:14px; }
+  #player .box { width:100%; max-width:860px; }
+  #player .frame { position:relative; width:100%; padding-top:56.25%; background:#000; border-radius:10px; overflow:hidden; }
+  #player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  #player .bar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; }
+  #player a { color:var(--body); font-size:13px; }
+  .oprow { display:flex; align-items:center; gap:8px; margin-top:6px; } .oprow input { flex:1; }
+  .cmpText { margin-top:4px; color:#ffd1e6; }
+  .recList { margin-top:8px; display:flex; flex-direction:column; gap:6px; max-height:320px; overflow:auto; }
+  .rec { display:flex; align-items:center; gap:10px; background:#2b303b; border-radius:10px; padding:6px; }
+  .rec img { width:64px; height:48px; object-fit:cover; border-radius:6px; }
+  .rec .rt { flex:1; font-size:12px; line-height:1.4; text-align:left; background:none; padding:0; font-weight:600; }
+  .rec { cursor:pointer; }
+  .rec.sel { outline:2px solid var(--ng); }
+  .rec .ck { font-size:22px; width:26px; text-align:center; }
+  .recBar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; position:sticky; top:0; background:var(--panel); padding:2px 0 6px; z-index:1; }
+  .recBar .note { flex:1; min-width:120px; }
+  button.danger { background:#4a2228; color:#ffb4b4; }
+  .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
+  .prevBox { margin-top:8px; }
+  .curLabel { font-size:13px; font-weight:800; color:var(--body); margin:4px 2px 0; }
+  .prevLabel { font-size:13px; font-weight:800; color:var(--tri); margin-bottom:6px; }
+  .prevImg { width:100%; border-radius:10px; display:block; }
+  .deltas { display:grid; grid-template-columns:1fr auto auto auto; gap:4px 10px; font-size:13px; margin-top:8px; align-items:baseline; }
+  .deltas .h { color:var(--sub); font-size:11px; }
+  .deltas .up { color:var(--ok); } .deltas .dn { color:var(--ng); }
+  h3.sec { font-size:15px; margin:18px 2px 6px; }
+</style>
+</head>
+<body>
+<header>
+  <!-- ロゴ：吉田塾のロゴを logo.png として同じフォルダに置くと表示されます -->
+  <img id="logo" src="logo.png" alt="究極 SAFETY RIDING" onerror="this.onerror=null;this.src='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;150&quot; height=&quot;46&quot;><rect width=&quot;150&quot; height=&quot;46&quot; rx=&quot;8&quot; fill=&quot;#1F2B4D&quot;/><text x=&quot;75&quot; y=&quot;30&quot; font-size=&quot;18&quot; font-family=&quot;sans-serif&quot; font-weight=&quot;800&quot; fill=&quot;#fff&quot; text-anchor=&quot;middle&quot;>吉田塾</text></svg>')">
+  <div>
+    <h1>ライディングポジションチェッカー</h1>
+    <p>正面と横の写真を撮ると、AIが自動で角度ラインを入れます</p>
+  </div>
+</header>
+
+<main>
+  <!-- ===== 正面 ===== -->
+  <section class="view" id="v-front">
+    <div class="vhead">
+      <h2>正面から<span class="tag">リーン・鼻筋の位置</span></h2>
+      <label class="btn primary" for="f-front">📷 撮る／選ぶ</label>
+      <input id="f-front" type="file" accept="image/*">
+    </div>
+    <div class="stage"><div class="placeholder">コーナリング中を<b>正面（または真後ろ）</b>から撮った写真</div><canvas></canvas></div>
+    <div class="curLabel" style="display:none">▲ 今回</div>
+    <div class="prevBox" style="display:none">
+      <div class="prevLabel"></div>
+      <img class="prevImg" alt="以前の記録">
+      <div class="deltas"></div>
+      <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
+    </div>
+    <div class="status"></div>
+    <div class="result" style="display:none">
+      <div class="verdict">—</div>
+      <div class="res">
+        <span class="k">鼻筋の位置</span><span data-r="nose">—</span>
+        <span class="k">バイクのバンク角</span><span data-r="bike">—</span>
+        <span class="k">上半身の角度</span><span data-r="body">—</span>
+        <span class="k">頭（腰→鼻）の角度</span><span data-r="head">—</span>
+        <span class="k">上半身とバイクの差</span><span data-r="diff">—</span>
+      </div>
+      <label class="chk"><input type="checkbox" class="useHorizon"> 水平線で傾き補正（緑の線を地面に合わせる）</label>
+      <label class="chk"><input type="checkbox" class="fromRear"> 真後ろから撮った写真</label>
+      <div class="cmp">
+        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田さんの見本を透かして重ねる</label>
+        <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
+        <div class="note cmpText"></div>
+      </div>
+      <div class="row"><button class="redetect">🔄 自動検出し直す</button></div>
+      <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
+      <div class="recList" style="display:none"></div>
+      <div class="legend"><span class="dot" style="background:var(--bike)"></span>バイク<span class="dot" style="background:var(--body)"></span>上半身（腰→肩）<span class="dot" style="background:var(--head)"></span>鼻筋<span class="dot" style="background:var(--ok)"></span>内側グリップ（点線＝理想の鼻筋の位置）</div>
+      <div class="theory">
+        <b class="h">吉田流のおすすめ姿勢</b>
+        私のリーンウィズは、バイクと同じ角度より少しだけ内側。<b>内側のグリップの上に鼻筋がくる</b>ところが理想です。意識をお尻に集め、シートに体重がぐっと押しつけられる場所を探すと、遠心力と釣り合う位置に入れます。
+      </div>
+      <div class="vids" data-vids></div>
+    </div>
+  </section>
+
+  <!-- ===== 横 ===== -->
+  <section class="view" id="v-side">
+    <div class="vhead">
+      <h2>横から<span class="tag side">前傾・仙骨・背骨</span></h2>
+      <label class="btn primary" for="f-side">📷 撮る／選ぶ</label>
+      <input id="f-side" type="file" accept="image/*">
+    </div>
+    <div class="stage"><div class="placeholder">バイクにまたがった姿勢を<b>真横</b>から撮った写真（前後のタイヤが写るように）</div><canvas></canvas></div>
+    <div class="curLabel" style="display:none">▲ 今回</div>
+    <div class="prevBox" style="display:none">
+      <div class="prevLabel"></div>
+      <img class="prevImg" alt="以前の記録">
+      <div class="deltas"></div>
+      <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
+    </div>
+    <div class="status"></div>
+    <div class="result" style="display:none">
+      <div class="verdict">—</div>
+      <div class="res">
+        <span class="k">仙骨の向き</span><span data-r="sacrum">—</span>
+        <span class="k">背骨</span><span data-r="spine">—</span>
+        <span class="k">上半身の前傾角</span><span data-r="lean">—</span>
+        <span class="k">目線（耳→鼻の線）</span><span data-r="gaze">—</span>
+        <span class="k">首（上半身に対して）</span><span data-r="neck">—</span>
+        <span class="k">頭の前後位置</span><span data-r="headpos">—</span>
+        <span class="k">三角の頂点角（頭）</span><span data-r="apex">—</span>
+      </div>
+      <div class="cmp">
+        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田さんの見本を透かして重ねる</label>
+        <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
+        <div class="note cmpText"></div>
+      </div>
+      <div class="row"><button class="redetect">🔄 自動検出し直す</button><button class="swap">↔ 前後を入れ替え</button></div>
+      <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
+      <div class="recList" style="display:none"></div>
+      <div class="legend"><span class="dot" style="background:var(--tri)"></span>接地点と頭頂の三角<span class="dot" style="background:var(--sac)"></span>仙骨の向き<span class="dot" style="background:var(--ok)"></span>背中のライン<span class="dot" style="background:var(--body)"></span>上半身<span class="dot" style="background:var(--head)"></span>目線</div>
+      <div class="theory">
+        <b class="h">吉田流のおすすめ姿勢</b>
+        姿勢は<b>足 → シート → 骨盤</b>の順に作ります。土踏まずでステップに乗り、シートの真ん中に座り、<b>仙骨を立てる</b>。顔は<b>鼻と耳の穴を結ぶ線が地面と平行</b>になるくらい。ハンドルは力いっぱいを10として0.5の力で握ります。<br>
+        加速では、アクセルを開けて少し遅れてから仙骨を<b>後ろ（リア）</b>へ。減速では、アクセルを戻す前に仙骨を<b>前（フロント）</b>へ入れておきます。
+      </div>
+      <div class="vids" data-vids></div>
+    </div>
+  </section>
+
+  <div class="row" style="margin-top:14px">
+    <button id="save" disabled>💾 2枚まとめて保存用画像を作る</button>
+  </div>
+  <img id="outImg" alt="保存用画像">
+  <div class="note" id="outNote" style="display:none">↑ 画像を長押しして「写真に保存」できます。</div>
+
+  <h3 class="sec">📺 姿勢の解説動画</h3>
+  <div class="vids" id="allVids"></div>
+
+  <div class="note footer">
+    ・角度ラインは丸い点をドラッグして手直しできます（写真の上でも、点以外の場所ならスクロールできます）。<br>
+    ・正面：左右は<b>ライダーから見た向き</b>で表示します（真後ろから撮った写真はチェックを入れてください）。<br>
+    ・横：前後タイヤの接地点を結んだ線を地面として、前傾角（0°＝直立、90°＝水平）を測ります。頭の前後位置は後輪の接地点を0%、前輪を100%とします。仙骨と背骨は、AIが切り出した体の輪郭から推定しています。
+  </div>
+</main>
+
+<div id="player"><div class="box">
+  <div class="frame"><iframe id="ytFrame" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
+  <div class="bar"><a id="ytLink" href="#" target="_blank" rel="noopener">YouTubeで開く</a><button id="ytClose">✕ 閉じる</button></div>
+</div></div>
+
+<script type="module">
+// ================= videos (吉田流ライディング理論) =================
+const V = {
+  curve1: ["目からウロコのY田流 定常円から学ぶカーブの運転姿勢", "E071EDVsmRc"],
+  curve2: ["目からウロコのY田流 タイヤを潰す体の位置（4本パイロン）", "-xAS-tTZQRQ"],
+  curve3: ["目からウロコのY田流 定常円旋回とカーブ姿勢", "lPrle38u8co"],
+  form:   ["基本編 ライディングフォーム", "oa4pme71I-k"],
+  sacrum: ["基本編 仙骨の使い方", "075E6un4LnY"],
+  pos1:   ["目からウロコのY田流 運転姿勢 #1", "DzXBEn8vdSI"],
+  seat:   ["目からウロコのY田流 シートの使い方 #2", "10AG9279CBM"],
+  eyes:   ["基本編 クランク（目線）", "h9Qy7Leb3MQ"],
+};
+const ALL_VIDS = ["curve1", "curve2", "curve3", "form", "sacrum", "pos1", "seat", "eyes"];
+function vidButton(key) {
+  const [title, id] = V[key];
+  const b = document.createElement("button"); b.className = "vid"; b.textContent = title;
+  b.addEventListener("click", () => openVideo(id)); return b;
+}
+function renderVids(container, keys) { container.innerHTML = ""; keys.forEach(k => container.appendChild(vidButton(k))); }
+const player = document.getElementById("player"), ytFrame = document.getElementById("ytFrame"), ytLink = document.getElementById("ytLink");
+function openVideo(id) {
+  ytLink.href = `https://youtu.be/${id}`;
+  ytFrame.src = `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&playsinline=1&rel=0`;
+  player.style.display = "flex";
+}
+document.getElementById("ytClose").addEventListener("click", () => { ytFrame.src = "about:blank"; player.style.display = "none"; });
+renderVids(document.getElementById("allVids"), ALL_VIDS);
+
+// ================= model loading (retryable) =================
+const MP_VER = "0.10.14";
+const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const POSE_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
+const SEG_MODEL  = "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite";
+let loadP = null;
+function startLoad() {
+  if (loadP) return loadP;
+  loadP = (async () => {
+    const { FilesetResolver, PoseLandmarker, ImageSegmenter } = await import(`${MP_BASE}/vision_bundle.mjs`);
+    const fileset = await FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
+    let pose;
+    try { pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate: "GPU" }, runningMode: "IMAGE", numPoses: 1 }); }
+    catch (e) { pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate: "CPU" }, runningMode: "IMAGE", numPoses: 1 }); }
+    const seg = await ImageSegmenter.createFromOptions(fileset, { baseOptions: { modelAssetPath: SEG_MODEL, delegate: "CPU" },
+      runningMode: "IMAGE", outputCategoryMask: true, outputConfidenceMasks: false });
+    const labels = seg.getLabels ? seg.getLabels() : [];
+    let bikeIdx = labels.findIndex(l => /motor/i.test(l)); if (bikeIdx < 0) bikeIdx = 14;
+    let personIdx = labels.findIndex(l => /person/i.test(l)); if (personIdx < 0) personIdx = 15;
+    return { pose, seg, bikeIdx, personIdx };
+  })().catch(e => { console.warn(e); loadP = null; throw e; });
+  return loadP;
+}
+function loadModels(ms = 60000) {
+  const to = new Promise(r => setTimeout(() => r(null), ms));
+  return Promise.race([startLoad(), to]).catch(() => null);
+}
+
+function runPose(m, canvas) {
+  const r = m.pose.detect(canvas);
+  const lm = r.landmarks && r.landmarks[0];
+  if (!lm) return null;
+  return i => ({ x: lm[i].x * canvas.width, y: lm[i].y * canvas.height, v: lm[i].visibility ?? 1 });
+}
+function runSeg(m, canvas) {
+  const r = m.seg.segment(canvas);
+  const cm = r.categoryMask;
+  const out = { mask: cm.getAsUint8Array().slice(), w: cm.width, h: cm.height,
+                sx: canvas.width / cm.width, sy: canvas.height / cm.height };
+  if (r.close) r.close(); else if (cm.close) cm.close();
+  out.at = (x, y) => { // canvas coords -> label
+    const mx = Math.floor(x / out.sx), my = Math.floor(y / out.sy);
+    if (mx < 0 || my < 0 || mx >= out.w || my >= out.h) return -1;
+    return out.mask[my * out.w + mx];
+  };
+  return out;
+}
+
+// ================= geometry =================
+const deg = r => r * 180 / Math.PI;
+const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+const extend = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const leanOf = (b, t) => dist(b, t) < 1 ? 0 : deg(Math.atan2(t.x - b.x, -(t.y - b.y)));
+function angleAt(p, a, b) {
+  const v1 = { x: a.x - p.x, y: a.y - p.y }, v2 = { x: b.x - p.x, y: b.y - p.y };
+  const c = (v1.x * v2.x + v1.y * v2.y) / ((Math.hypot(v1.x, v1.y) * Math.hypot(v2.x, v2.y)) || 1);
+  return deg(Math.acos(Math.max(-1, Math.min(1, c))));
+}
+const norm180 = a => { while (a > 90) a -= 180; while (a < -90) a += 180; return a; };
+
+// ================= drawing =================
+const C = {};
+function cacheColors() { const s = getComputedStyle(document.documentElement);
+  for (const k of ["bike", "body", "head", "tri", "ok", "ng", "sac"]) C[k] = s.getPropertyValue("--" + k).trim(); }
+cacheColors();
+function line(ctx, a, b, color, w, dash) {
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = w; ctx.setLineDash(dash || []); ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore();
+}
+function arrow(ctx, a, b, color, w) {
+  line(ctx, a, b, color, w);
+  const ang = Math.atan2(b.y - a.y, b.x - a.x), L = w * 4;
+  ctx.save(); ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(b.x, b.y);
+  ctx.lineTo(b.x - L * Math.cos(ang - .45), b.y - L * Math.sin(ang - .45));
+  ctx.lineTo(b.x - L * Math.cos(ang + .45), b.y - L * Math.sin(ang + .45)); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function handle(ctx, p, color, R) {
+  ctx.save(); ctx.fillStyle = color; ctx.strokeStyle = "#fff"; ctx.lineWidth = R * .25;
+  ctx.beginPath(); ctx.arc(p.x, p.y, R, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
+}
+function label(ctx, text, x, y, color, fs) {
+  ctx.save(); ctx.font = `800 ${fs}px -apple-system, "Hiragino Sans", sans-serif`;
+  const w = ctx.measureText(text).width, pad = fs * .35;
+  x = Math.min(Math.max(x, pad), ctx.canvas.width - w - pad * 2);
+  y = Math.min(Math.max(y, fs + pad), ctx.canvas.height - pad);
+  ctx.fillStyle = "rgba(0,0,0,.65)"; ctx.fillRect(x, y - fs, w + pad * 2, fs * 1.35);
+  ctx.fillStyle = color; ctx.fillText(text, x + pad, y + fs * .1); ctx.restore();
+}
+function infoBox(ctx, lines, color, fs) {
+  const pad = fs * .5, h = lines.length * fs * 1.35 + pad * 1.5;
+  ctx.save(); ctx.font = `800 ${fs}px -apple-system, "Hiragino Sans", sans-serif`;
+  const w = Math.min(ctx.canvas.width - pad * 2, Math.max(...lines.map(l => ctx.measureText(l).width)) + pad * 2);
+  ctx.fillStyle = "rgba(0,0,0,.72)"; ctx.fillRect(pad, pad, w, h);
+  lines.forEach((l, i) => { ctx.fillStyle = i ? "#fff" : color; ctx.fillText(l, pad * 2, pad + fs * 1.15 + i * fs * 1.35); });
+  ctx.restore();
+}
+
+// ================= history storage (IndexedDB, falls back to memory) =================
+const Store = {
+  mem: [], db: null, ok: true,
+  open() {
+    if (this.db || !this.ok) return Promise.resolve(this.db);
+    return new Promise(res => {
+      try {
+        const r = indexedDB.open("rpc-history", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("recs", { keyPath: "id" });
+        r.onsuccess = () => { this.db = r.result; res(this.db); };
+        r.onerror = () => { this.ok = false; res(null); };
+      } catch (e) { this.ok = false; res(null); }
+    });
+  },
+  async add(rec) {
+    const db = await this.open();
+    if (!db) { this.mem.push(rec); return; }
+    await new Promise((res, rej) => { const t = db.transaction("recs", "readwrite"); t.objectStore("recs").put(rec); t.oncomplete = res; t.onerror = rej; });
+  },
+  async list(view) {
+    const db = await this.open();
+    const all = db ? await new Promise(res => { const q = db.transaction("recs").objectStore("recs").getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); }) : this.mem;
+    return all.filter(r => r.view === view).sort((a, b) => b.id - a.id);
+  },
+  async del(id) {
+    const db = await this.open();
+    if (!db) { this.mem = this.mem.filter(r => r.id !== id); return; }
+    await new Promise(res => { const t = db.transaction("recs", "readwrite"); t.objectStore("recs").delete(id); t.oncomplete = res; t.onerror = res; });
+  },
+};
+const fmtDate = id => { const d = new Date(id); const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+// ================= generic view =================
+class View {
+  constructor(sectionId, inputId, spec) {
+    this.sec = document.getElementById(sectionId);
+    this.input = document.getElementById(inputId);
+    this.cv = this.sec.querySelector("canvas"); this.ctx = this.cv.getContext("2d");
+    this.work = document.createElement("canvas"); this.wctx = this.work.getContext("2d");
+    this.statusEl = this.sec.querySelector(".status"); this.resultEl = this.sec.querySelector(".result");
+    this.vidsEl = this.sec.querySelector("[data-vids]");
+    this.spec = spec; this.pts = null; this.loaded = false; this.drag = null; this.dragId = null; this.gen = 0; this.raf = 0;
+    this.input.addEventListener("change", e => this.onFile(e));
+    this.sec.querySelector(".redetect").addEventListener("click", () => this.detect());
+    const sw = this.sec.querySelector(".swap");
+    if (sw) sw.addEventListener("click", () => { if (this.pts && spec.swap) { spec.swap(this.pts); hideOut(); this.draw(); this.scheduleSave(); } });
+    this.sec.querySelectorAll("input[type=checkbox]").forEach(c => c.addEventListener("change", () => { this.draw(); if (!c.classList.contains("overlay")) this.scheduleSave(); }));
+    this.sample = null; this.sampleState = "none";
+    this.sec.querySelector(".overlay").addEventListener("change", e => {
+      this.sec.querySelector(".oprow").style.display = e.target.checked ? "flex" : "none";
+      if (e.target.checked) this.loadSample();
+    });
+    this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
+    this.prev = null;
+    this.recId = null; this.saveTimer = 0;
+    this.sec.querySelector(".closePrev").addEventListener("click", () => this.hidePrev());
+    this.sec.querySelector(".cmpPrev").addEventListener("click", () => this.toggleList());
+    // touch: block scrolling only when the finger starts on a handle
+    this.cv.addEventListener("touchstart", e => { const t = e.touches[0]; if (e.touches.length === 1 && this.hit(t)) e.preventDefault(); }, { passive: false });
+    this.cv.addEventListener("touchmove", e => { if (this.drag) e.preventDefault(); }, { passive: false });
+    this.cv.addEventListener("pointerdown", e => this.down(e));
+    this.cv.addEventListener("pointermove", e => this.move(e));
+    const up = e => { if (e.pointerId === this.dragId) { this.drag = null; this.dragId = null; } };
+    this.cv.addEventListener("pointerup", up); this.cv.addEventListener("pointercancel", up);
+  }
+  status(t) { this.statusEl.textContent = t; }
+  cmpText(t) { this.sec.querySelector(".cmpText").textContent = t; }
+  // ---- 履歴 ----
+  scheduleSave() {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.record(), 1200);
+  }
+  async record() {
+    if (!this.pts || !this.last || !this.recId) return;
+    this.draw(true);
+    const k = Math.min(1, 900 / this.cv.width), c = document.createElement("canvas");
+    c.width = Math.round(this.cv.width * k); c.height = Math.round(this.cv.height * k);
+    c.getContext("2d").drawImage(this.cv, 0, 0, c.width, c.height);
+    const img = c.toDataURL("image/jpeg", .82);
+    this.draw();
+    const rec = { id: this.recId, view: this.spec.name, img, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
+    try { await Store.add(rec); this.savedNote = Store.db ? "💾 このiPhoneに自動保存しました" : "💾 一時保存しました（この画面を閉じると消えます）"; }
+    catch (e) { console.warn(e); this.savedNote = "⚠️ 自動保存できませんでした"; }
+    const st = this.statusEl.textContent.replace(/\s*💾.*$|\s*⚠️ 自動保存.*$/, "");
+    this.status((st ? st + "　" : "") + this.savedNote);
+    if (this.sec.querySelector(".recList").style.display !== "none") this.renderList();
+  }
+  async toggleList() {
+    const el = this.sec.querySelector(".recList");
+    if (el.style.display === "none") { el.style.display = "flex"; await this.renderList(); }
+    else el.style.display = "none";
+  }
+  async renderList() {
+    const el = this.sec.querySelector(".recList"); el.innerHTML = "";
+    const recs = (await Store.list(this.spec.name)).filter(r => r.id !== this.recId);
+    if (!recs.length) { this.selMode = false; el.innerHTML = '<div class="note">まだ以前の記録がありません。解析した結果は自動で保存され、次に写真を読み込んだときにここに並びます。</div>'; return; }
+    if (!this.sel) this.sel = new Set();
+    for (const id of [...this.sel]) if (!recs.some(r => r.id === id)) this.sel.delete(id);
+    // toolbar
+    const bar = document.createElement("div"); bar.className = "recBar";
+    const mk = (t, cls, fn) => { const b = document.createElement("button"); b.textContent = t; if (cls) b.className = cls; b.addEventListener("click", fn); bar.appendChild(b); return b; };
+    if (!this.selMode) {
+      const hint = document.createElement("span"); hint.className = "note"; hint.textContent = "見たい記録をタップ"; bar.appendChild(hint);
+      mk("☑ 選択して削除", "", () => { this.selMode = true; this.sel.clear(); this.renderList(); });
+      mk("🗑 すべて削除", "danger", () => this.askDelete(recs.map(r => r.id), `以前の記録 ${recs.length}件をすべて削除します。よろしいですか？`));
+    } else {
+      mk(this.sel.size === recs.length ? "選択を外す" : "すべて選ぶ", "", () => {
+        if (this.sel.size === recs.length) this.sel.clear(); else recs.forEach(r => this.sel.add(r.id));
+        this.renderList(); });
+      const del = mk(`🗑 選んだものを削除（${this.sel.size}件）`, "danger", () => this.askDelete([...this.sel], `選んだ記録 ${this.sel.size}件を削除します。よろしいですか？`));
+      del.disabled = !this.sel.size;
+      mk("やめる", "", () => { this.selMode = false; this.sel.clear(); this.renderList(); });
+    }
+    el.appendChild(bar);
+    const confirmEl = document.createElement("div"); confirmEl.className = "recConfirm"; confirmEl.style.display = "none"; el.appendChild(confirmEl);
+    // rows
+    for (const r of recs) {
+      const row = document.createElement("div"); row.className = "rec" + (this.selMode && this.sel.has(r.id) ? " sel" : "");
+      if (this.selMode) { const ck = document.createElement("span"); ck.className = "ck"; ck.textContent = this.sel.has(r.id) ? "☑" : "☐"; row.appendChild(ck); }
+      const im = document.createElement("img"); im.src = r.img;
+      const b = document.createElement("div"); b.className = "rt"; b.innerHTML = `${fmtDate(r.id)}<br><span class="note"></span>`;
+      b.querySelector(".note").textContent = r.verdict;
+      row.append(im, b);
+      row.addEventListener("click", () => {
+        if (this.selMode) { if (this.sel.has(r.id)) this.sel.delete(r.id); else this.sel.add(r.id); this.renderList(); }
+        else this.showPrev(r);
+      });
+      el.appendChild(row);
+    }
+  }
+  askDelete(ids, msg) {
+    if (!ids.length) return;
+    const c = this.sec.querySelector(".recConfirm"); c.style.display = "block"; c.innerHTML = "";
+    const t = document.createElement("div"); t.textContent = msg + "（元に戻せません）"; c.appendChild(t);
+    const row = document.createElement("div"); row.className = "row";
+    const yes = document.createElement("button"); yes.className = "danger"; yes.textContent = "削除する";
+    const no = document.createElement("button"); no.textContent = "やめる";
+    yes.addEventListener("click", async () => {
+      yes.disabled = true;
+      for (const id of ids) await Store.del(id);
+      if (this.prev && ids.includes(this.prev.id)) this.hidePrev();
+      this.selMode = false; if (this.sel) this.sel.clear();
+      await this.renderList();
+      this.status(`🗑 ${ids.length}件の記録を削除しました。`);
+    });
+    no.addEventListener("click", () => { c.style.display = "none"; });
+    row.append(yes, no); c.appendChild(row);
+    c.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+  showPrev(r) {
+    this.prev = r;
+    const box = this.sec.querySelector(".prevBox"); box.style.display = "block";
+    box.querySelector(".prevLabel").textContent = `以前の記録：${fmtDate(r.id)}　${r.verdict}`;
+    box.querySelector(".prevImg").src = r.img;
+    this.sec.querySelector(".recList").style.display = "none";
+    this.sec.querySelector(".curLabel").style.display = "block";
+    this.renderDeltas();
+    this.sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  hidePrev() { this.prev = null; this.sec.querySelector(".prevBox").style.display = "none"; this.sec.querySelector(".curLabel").style.display = "none"; }
+  renderDeltas() {
+    if (!this.prev) return;
+    const el = this.sec.querySelector(".deltas");
+    const now = this.last ? this.spec.nums(this.last) : {};
+    let h = '<span class="h">項目</span><span class="h">以前</span><span class="h">今回</span><span class="h">変化</span>';
+    for (const [k, [pv, unit]] of Object.entries(this.prev.nums)) {
+      const nv = now[k] ? now[k][0] : NaN;
+      const f = x => isFinite(x) ? x.toFixed(1) + unit : "—";
+      const d = nv - pv;
+      h += `<span>${k}</span><span>${f(pv)}</span><span>${f(nv)}</span><span>${isFinite(d) ? (d >= 0 ? "+" : "") + d.toFixed(1) : "—"}</span>`;
+    }
+    el.innerHTML = h;
+  }
+  // ---- 見本（吉田さんの写真）: sample-front.jpg / sample-side.jpg を同じフォルダに置く ----
+  async loadSample() {
+    if (this.sampleState === "ready" || this.sampleState === "loading") return;
+    this.sampleState = "loading"; this.cmpText("見本を準備中…");
+    try {
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = this.spec.sampleSrc; });
+      const c = document.createElement("canvas");
+      const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+      c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+      let pts = this.spec.samplePts ? this.spec.samplePts(c.width, c.height) : null;
+      if (!pts) {
+        const m = await loadModels();
+        if (!m) throw new Error("model");
+        let pose = null, seg = null;
+        try { pose = runPose(m, c); } catch (e) {}
+        try { seg = runSeg(m, c); } catch (e) {}
+        pts = this.spec.auto(c.width, c.height, pose, seg, m, []);
+      }
+      this.sample = { c, pts }; this.sampleState = "ready";
+    } catch (e) {
+      console.warn(e); this.sampleState = "none";
+      this.cmpText(e && e.message === "model" ? "AIモデルを読み込めず、見本の位置を合わせられませんでした。電波の良い所でもう一度チェックしてください。"
+                                              : "見本写真がまだ入っていないか、読み込めませんでした。");
+      return;
+    }
+    this.draw();
+  }
+  drawSample(ctx) {
+    const s = this.sample, [a0, a1] = this.spec.anchors;
+    let sp = s.pts, src = s.c;
+    // side view: mirror the sample if it faces the other way
+    const ux0 = this.pts[a1].x - this.pts[a0].x, sx0 = sp[a1].x - sp[a0].x;
+    const needFlip = this.spec.mirrorCheck === "lean"
+      ? Math.abs(this.spec.leanSign(this.pts)) && this.spec.leanSign(this.pts) !== this.spec.leanSign(sp)
+      : this.spec.mirrorCheck && Math.abs(ux0) > 5 && Math.abs(sx0) > 5 && Math.sign(sx0) !== Math.sign(ux0);
+    if (needFlip) {
+      if (!s.flip) {
+        const f = document.createElement("canvas"); f.width = src.width; f.height = src.height;
+        const fc = f.getContext("2d"); fc.translate(f.width, 0); fc.scale(-1, 1); fc.drawImage(src, 0, 0);
+        const fp = {}; for (const [k, q] of Object.entries(sp)) fp[k] = (q && typeof q === "object") ? { x: f.width - q.x, y: q.y } : q;
+        for (const [a, b] of (this.spec.mirrorSwap || [])) [fp[a], fp[b]] = [fp[b], fp[a]];
+        s.flip = { c: f, pts: fp };
+      }
+      src = s.flip.c; sp = s.flip.pts;
+    }
+    const s0 = sp[a0], s1 = sp[a1], u0 = this.pts[a0], u1 = this.pts[a1];
+    const sl = dist(s0, s1), ul = dist(u0, u1); if (sl < 5 || ul < 5) return null;
+    const k = ul / sl, th = Math.atan2(u1.y - u0.y, u1.x - u0.x) - Math.atan2(s1.y - s0.y, s1.x - s0.x);
+    ctx.save(); ctx.globalAlpha = +this.sec.querySelector(".opacity").value / 100;
+    ctx.translate(u0.x, u0.y); ctx.rotate(th); ctx.scale(k, k); ctx.translate(-s0.x, -s0.y);
+    ctx.drawImage(src, 0, 0); ctx.restore();
+    return sp;
+  }
+  opt(cls) { const c = this.sec.querySelector("." + cls); return !!(c && c.checked); }
+  onFile(e) {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const url = URL.createObjectURL(f), im = new Image();
+    im.onload = async () => {
+      const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+      this.work.width = this.cv.width = Math.round(im.naturalWidth * k);
+      this.work.height = this.cv.height = Math.round(im.naturalHeight * k);
+      this.wctx.drawImage(im, 0, 0, this.work.width, this.work.height);
+      URL.revokeObjectURL(url);
+      this.loaded = true; this.pts = null; this.recId = Date.now(); updateSave();
+      this.sec.querySelector(".placeholder").style.display = "none";
+      this.cv.style.display = "block";
+      hideOut(); this.draw();
+      await this.detect();
+    };
+    im.onerror = () => this.status("画像を読み込めませんでした。別の写真で試してください。");
+    im.src = url; e.target.value = "";
+  }
+  async detect() {
+    if (!this.loaded) return;
+    const gen = ++this.gen;
+    const btn = this.sec.querySelector(".redetect"); btn.disabled = true;
+    const W = this.work.width, H = this.work.height;
+    try {
+      this.status("AIモデルを準備中…（初回は少し時間がかかります）");
+      const m = await loadModels();
+      if (gen !== this.gen) return;
+      if (!m) {
+        this.pts = this.spec.defaults(W, H); this.pts._guess = true; this.draw();
+        this.status("⚠️ AIモデルを読み込めませんでした。丸い点を手で合わせてください（角度は自動計算）。電波の良い所で🔄を押すと再挑戦します。");
+        return;
+      }
+      this.status("AIで検出中…");
+      await new Promise(r => setTimeout(r, 30));
+      if (gen !== this.gen) return;
+      const notes = [];
+      let pose = null, seg = null;
+      try { pose = runPose(m, this.work); if (!pose) notes.push("ライダーが見つかりませんでした"); }
+      catch (e) { console.warn(e); notes.push("ライダーの検出に失敗"); }
+      try { seg = runSeg(m, this.work); } catch (e) { console.warn(e); notes.push("輪郭の検出に失敗"); }
+      this.pts = this.spec.auto(W, H, pose, seg, m, notes);
+      this.draw();
+      this.status(notes.length ? `✅ 検出しました（${notes.join("／")}）。ずれていたら点をドラッグしてください。`
+                               : "✅ 自動で角度ラインを入れました。ずれていたら点をドラッグしてください。");
+    } catch (e) {
+      console.warn(e);
+      if (!this.pts) this.pts = this.spec.defaults(W, H);
+      this.draw();
+      this.status("⚠️ 自動検出でエラーが起きました。丸い点を手で合わせてください。");
+    } finally { if (gen === this.gen) { btn.disabled = false; this.scheduleSave(); } updateSave(); }
+  }
+  toCanvas(e) {
+    const r = this.cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * this.cv.width / r.width, y: (e.clientY - r.top) * this.cv.height / r.height };
+  }
+  dispScale() { return this.cv.width / (this.cv.getBoundingClientRect().width || this.cv.width); }
+  hit(e) {
+    if (!this.pts) return null;
+    const p = this.toCanvas(e);
+    let best = null, bd = 30 * this.dispScale();
+    for (const k of this.spec.keys(this)) { const q = this.pts[k]; if (!q) continue; const d = dist(q, p); if (d < bd) { bd = d; best = k; } }
+    return best;
+  }
+  down(e) {
+    const k = this.hit(e);
+    if (k) { this.drag = k; this.dragId = e.pointerId; this.cv.setPointerCapture(e.pointerId); e.preventDefault(); }
+  }
+  move(e) {
+    if (!this.drag || e.pointerId !== this.dragId) return;
+    const p = this.toCanvas(e);
+    this.pts[this.drag] = { x: Math.max(0, Math.min(this.cv.width, p.x)), y: Math.max(0, Math.min(this.cv.height, p.y)) };
+    if (this.spec.onDrag) this.spec.onDrag(this.pts, this.drag);
+    hideOut(); this.scheduleSave();
+    if (!this.raf) this.raf = requestAnimationFrame(() => { this.raf = 0; this.draw(); });
+  }
+  draw(forExport) {
+    if (!this.loaded) return;
+    this.ctx.drawImage(this.work, 0, 0);
+    if (!this.pts) return;
+    const big = Math.max(this.cv.width, this.cv.height) / 1000;
+    const S = forExport ? big : Math.max(big, this.dispScale() * .9);
+    const g = { R: 13 * S, LW: 4.5 * S, FS: Math.round(24 * S), exp: !!forExport };
+    const m = this.spec.measure(this);
+    this.last = m;
+    if (this.opt("overlay") && this.sampleState === "ready") {
+      if (this.sample.pts._guess) this.cmpText("見本写真のバイクを検出できず、位置を合わせられませんでした。");
+      else if (this.drawSample(this.ctx)) {
+        const sm = this.spec.measure({ pts: this.sample.pts, opt: k => k === "fromRear" ? this.opt(k) : false });
+        this.cmpText("見本：" + this.spec.cmp(sm));
+      }
+    } else if (!this.opt("overlay")) this.cmpText("");
+    this.spec.render(this, this.ctx, g, m);
+    if (!forExport) for (const k of this.spec.keys(this)) if (this.pts[k]) handle(this.ctx, this.pts[k], this.spec.color(k), g.R);
+    if (forExport) infoBox(this.ctx, this.spec.summary(m), this.spec.accent(), Math.round(g.FS * 1.05));
+    this.resultEl.style.display = "block";
+    const vEl = this.sec.querySelector(".verdict");
+    vEl.textContent = m.verdict; vEl.className = "verdict " + (m.level || "");
+    for (const [k, v] of Object.entries(m.text)) { const el = this.sec.querySelector(`[data-r="${k}"]`); if (el) el.textContent = v; }
+    const vk = m.vids.join(",");
+    if (this.vidsEl && this.vidsEl.dataset.k !== vk) { this.vidsEl.dataset.k = vk; renderVids(this.vidsEl, m.vids); }
+    if (this.prev && !forExport) this.renderDeltas();
+  }
+}
+
+// ================= FRONT =================
+function bikeAxisFromMask(seg, idx) {
+  const { mask, w, h, sx: SX, sy: SY } = seg;
+  const step = Math.max(1, Math.round(Math.min(w, h) / 400));
+  let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+  for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step)
+    if (mask[y * w + x] === idx) { const X = x * SX, Y = y * SY; n++; sx += X; sy += Y; sxx += X * X; syy += Y * Y; sxy += X * Y; }
+  if (n < (w / step) * (h / step) * 0.003) return null;
+  const mx = sx / n, my = sy / n;
+  const cxx = sxx / n - mx * mx, cyy = syy / n - my * my, cxy = sxy / n - mx * my;
+  const th = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+  const tr = cxx + cyy, disc = Math.sqrt(Math.max(0, tr * tr / 4 - (cxx * cyy - cxy * cxy)));
+  const l1 = tr / 2 + disc, l2 = tr / 2 - disc;
+  let dx = Math.cos(th), dy = Math.sin(th); if (dy > 0) { dx = -dx; dy = -dy; }
+  if (Math.abs(deg(Math.atan2(dx, -dy))) > 60) return null;
+  let tmin = Infinity, tmax = -Infinity;
+  for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step)
+    if (mask[y * w + x] === idx) { const t = (x * SX - mx) * dx + (y * SY - my) * dy; if (t < tmin) tmin = t; if (t > tmax) tmax = t; }
+  return { bottom: { x: mx + dx * tmin, y: my + dy * tmin }, top: { x: mx + dx * tmax, y: my + dy * tmax }, elong: l2 > 0 ? l1 / l2 : 99 };
+}
+
+const FRONT = {
+  name: "front",
+  nums: m => ({ "鼻筋の位置（100%が理想）": [m.ratio * 100, "%"], "バンク角": [Math.abs(m.bike), "°"],
+                "上半身の角度": [Math.abs(m.body), "°"], "上半身とバイクの差（＋内側）": [m.diffIn, "°"] }),
+  sampleSrc: "sample-front.jpg", anchors: ["bikeB", "bikeT"], mirrorCheck: "lean",
+  mirrorSwap: [["gripL", "gripR"], ["hzL", "hzR"]],
+  leanSign: p => Math.sign(Math.round(leanOf(p.bikeB, p.bikeT))),
+  cmp: m => `鼻筋 ${m.text.nose}／上半身とバイクの差 ${m.text.diff}`,
+  accent: () => C.bike,
+  keys: v => ["bikeB", "bikeT", "hip", "shoulder", "nose", "gripL", "gripR"].concat(v.opt("useHorizon") ? ["hzL", "hzR"] : []),
+  color: k => k.startsWith("bike") ? C.bike : k === "nose" ? C.head : k.startsWith("grip") || k.startsWith("hz") ? C.ok : C.body,
+  defaults: (W, H) => ({
+    hip: { x: W * .5, y: H * .45 }, shoulder: { x: W * .5, y: H * .3 }, nose: { x: W * .5, y: H * .2 },
+    gripL: { x: W * .35, y: H * .4 }, gripR: { x: W * .65, y: H * .4 },
+    bikeB: { x: W * .5, y: H * .92 }, bikeT: { x: W * .5, y: H * .5 },
+    hzL: { x: W * .15, y: H * .85 }, hzR: { x: W * .85, y: H * .85 } }),
+  onDrag(p, k) { if (k.startsWith("bike")) p._guess = false; },
+  auto(W, H, P, seg, m, notes) {
+    const p = FRONT.defaults(W, H);
+    if (P) {
+      p.hip = mid(P(23), P(24)); p.shoulder = mid(P(11), P(12)); p.nose = P(0);
+      const a = P(15), b = P(16); // wrists = grips
+      if (a.x <= b.x) { p.gripL = a; p.gripR = b; } else { p.gripL = b; p.gripR = a; }
+    }
+    const b = seg && bikeAxisFromMask(seg, m.bikeIdx);
+    if (b) { p.bikeB = b.bottom; p.bikeT = b.top; if (b.elong < 1.5) notes.push("バイクの形がはっきりせず精度が低いかもしれません"); }
+    else { notes.push("バイクの傾きを取れませんでした。オレンジの点をタイヤの接地点と車体の中心に合わせてください");
+           p.bikeB = { x: p.hip.x, y: H * .92 }; p.bikeT = { x: p.hip.x, y: p.hip.y }; p._guess = true; }
+    return p;
+  },
+  measure(v) {
+    const P = v.pts;
+    const tilt = v.opt("useHorizon") ? norm180(deg(Math.atan2(P.hzR.y - P.hzL.y, P.hzR.x - P.hzL.x))) : 0;
+    const bike = leanOf(P.bikeB, P.bikeT) - tilt, body = leanOf(P.hip, P.shoulder) - tilt, head = leanOf(P.hip, P.nose) - tilt;
+    const s = Math.sign(bike) || 1;
+    const diffIn = (body - bike) * s;            // + = inside the bike
+    const rear = v.opt("fromRear");
+    const side = a => ((a > 0) === rear ? "右" : "左");
+    const fmt = a => Math.abs(a) < 0.5 ? "ほぼ垂直" : `${side(a)}へ ${Math.abs(a).toFixed(1)}°`;
+    // lateral offsets perpendicular to the bike axis, measured toward the inside of the turn
+    const L = dist(P.bikeB, P.bikeT) || 1, dx = (P.bikeT.x - P.bikeB.x) / L, dy = (P.bikeT.y - P.bikeB.y) / L;
+    const lx = -dy, ly = dx;                      // lateral unit (image-right when upright)
+    const off = q => ((q.x - P.bikeB.x) * lx + (q.y - P.bikeB.y) * ly) * s;
+    const inner = (s > 0) ? P.gripR : P.gripL;    // the grip on the lean side
+    const gIn = off(inner), nIn = off(P.nose);
+    const ratio = gIn > 1 ? nIn / gIn : NaN;
+    let verdict, level = "warn", vids;
+    const nearUp = Math.abs(bike) < 3;
+    if (P._guess) { verdict = "オレンジの点をバイクに合わせてください"; vids = ["curve1", "curve2"]; }
+    else if (nearUp) { verdict = "バイクがほぼ直立しています（コーナリング中の写真で判定します）"; vids = ["curve1", "curve3"]; }
+    else if (!isFinite(ratio)) { verdict = "緑の点を左右のグリップ（手首）に合わせてください"; vids = ["curve1"]; }
+    else if (ratio >= .8 && ratio <= 1.2) { verdict = "✅ 吉田流リーンウィズ：鼻筋が内側グリップの上にきています"; level = "good"; vids = ["curve2", "curve3"]; }
+    else if (ratio < .8) { verdict = nIn < 0 ? "鼻筋がバイクの中心より外側（リーンアウト）。もっと内側へ" : "鼻筋が内側グリップより外側。もう少し内側へ"; vids = ["curve1", "curve2"]; }
+    else { verdict = "鼻筋が内側グリップより内側に入りすぎ（リーンイン）"; vids = ["curve1", "curve3"]; }
+    const nosePct = isFinite(ratio) ? `グリップ位置の ${(ratio * 100).toFixed(0)}%（100%が理想）` : "—";
+    return { bike, body, head, tilt, inner, verdict, level, vids, guideSign: s, ratio, diffIn,
+      text: { nose: nosePct, bike: fmt(bike), body: fmt(body), head: fmt(head),
+              diff: nearUp ? "—" : `${Math.abs(diffIn).toFixed(1)}° ${diffIn >= 0 ? "内側" : "外側"}` } };
+  },
+  render(v, ctx, g, m) {
+    const P = v.pts, t = m.tilt * Math.PI / 180, len = v.cv.height * .7;
+    line(ctx, P.bikeB, { x: P.bikeB.x + Math.sin(t) * len, y: P.bikeB.y - Math.cos(t) * len }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
+    if (v.opt("useHorizon")) line(ctx, extend(P.hzL, P.hzR, -.2), extend(P.hzL, P.hzR, 1.2), C.ok, g.LW * .8);
+    line(ctx, extend(P.bikeB, P.bikeT, -.05), extend(P.bikeB, P.bikeT, 1.25), C.bike, g.LW);
+    // ideal nose line: parallel to the bike axis through the inner grip
+    const ax = { x: P.bikeT.x - P.bikeB.x, y: P.bikeT.y - P.bikeB.y }, al = Math.hypot(ax.x, ax.y) || 1;
+    const k = v.cv.height * .35 / al;
+    line(ctx, { x: m.inner.x - ax.x * k * .4, y: m.inner.y - ax.y * k * .4 }, { x: m.inner.x + ax.x * k, y: m.inner.y + ax.y * k }, C.ok, g.LW * .8, [g.LW * 1.5, g.LW]);
+    line(ctx, P.gripL, P.gripR, "rgba(74,222,128,.5)", g.LW * .5);
+    line(ctx, extend(P.hip, P.shoulder, -.6), extend(P.hip, P.shoulder, 1.4), C.body, g.LW);
+    line(ctx, P.shoulder, P.nose, C.head, g.LW * .7, [g.LW * 1.6, g.LW]);
+    const bt = extend(P.bikeB, P.bikeT, 1.25), st = extend(P.hip, P.shoulder, 1.4);
+    label(ctx, `バイク ${Math.abs(m.bike).toFixed(1)}°`, bt.x + g.R, bt.y + g.FS, C.bike, g.FS);
+    label(ctx, `上半身 ${Math.abs(m.body).toFixed(1)}°`, st.x + g.R, st.y, C.body, g.FS);
+    label(ctx, `鼻筋 ${m.text.nose.split("（")[0].replace("グリップ位置の ", "")}`, P.nose.x + g.R * 1.5, P.nose.y - g.R, C.head, g.FS);
+  },
+  summary: m => ["【正面】" + m.verdict.replace("✅ ", ""), `鼻筋 ${m.text.nose}`, `バイク ${m.text.bike}／上半身 ${m.text.body}`],
+};
+
+// ================= SIDE =================
+function contactsFromMask(seg, idx) {
+  const { mask, w, h } = seg;
+  let xmin = w, xmax = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (mask[y * w + x] === idx) { if (x < xmin) xmin = x; if (x > xmax) xmax = x; }
+  if (xmax - xmin < w * .15) return null;
+  const band = (xmax - xmin) * .3;
+  const lowest = (x0, x1) => {
+    let by = -1, xs = [];
+    for (let x = Math.max(0, Math.floor(x0)); x <= Math.min(w - 1, Math.ceil(x1)); x++)
+      for (let y = h - 1; y >= Math.max(0, by); y--) if (mask[y * w + x] === idx) {
+        if (y > by) { by = y; xs = [x]; } else if (y === by) xs.push(x); break; }
+    if (by < 0) return null;
+    const bx = xs.reduce((s, v) => s + v, 0) / xs.length;
+    return { x: (bx + .5) * seg.sx, y: (by + .5) * seg.sy };
+  };
+  const a = lowest(xmin, xmin + band), b = lowest(xmax - band, xmax);
+  return a && b ? { left: a, right: b } : null;
+}
+function headTopFromMask(seg, idx, ear, shoulder) {
+  // walk upward from the ear while staying inside the person mask
+  const hl = dist(ear, shoulder) || 40;
+  let y = ear.y, x = ear.x, top = null;
+  for (let s = 0; s < hl * 2.5; s++) {
+    const yy = ear.y - s; if (yy < 0) break;
+    let found = false;
+    for (let dx = 0; dx <= hl * .5; dx += 2) {
+      if (seg.at(x + dx, yy) === idx) { x = x + dx * .5; found = true; break; }
+      if (seg.at(x - dx, yy) === idx) { x = x - dx * .5; found = true; break; }
+    }
+    if (!found) break; top = { x, y: yy };
+  }
+  return top && ear.y - top.y > hl * .3 ? top : null;
+}
+// back contour: from points along hip->shoulder walk toward the back until leaving the person mask
+function backContour(seg, idx, hip, shoulder, frontDir) {
+  const L = dist(hip, shoulder); if (L < 10) return null;
+  const u = { x: (shoulder.x - hip.x) / L, y: (shoulder.y - hip.y) / L };
+  let p = { x: -u.y, y: u.x };
+  const score = q => (-q.y) - (q.x * frontDir);           // prefer up-and-rearward
+  if (score(p) < score({ x: -p.x, y: -p.y })) p = { x: -p.x, y: -p.y };
+  const pts = [];
+  for (let i = 0; i <= 10; i++) {
+    const t = i / 10, c = { x: hip.x + u.x * L * t, y: hip.y + u.y * L * t };
+    let last = 0;
+    for (let d = 0; d < L * .8; d += 1.5) { if (seg.at(c.x + p.x * d, c.y + p.y * d) === idx) last = d; else if (d - last > 6) break; }
+    pts.push({ x: c.x + p.x * last, y: c.y + p.y * last });
+  }
+  return pts;
+}
+
+// thresholds (calibrate with real photos)
+// 仙骨：腰の下の背中の線と上半身の角度差。
+// ＋（腰が反る・骨盤が前に倒れる）＝仙骨の先が後ろ（リア）を指す／−（腰が丸まる）＝前（フロント）を指す
+const SACRUM_REAR = 8, SACRUM_FRONT = -8, SPINE_ROUND = 0.04, SPINE_ARCH = -0.03;
+
+const SIDE = {
+  name: "side",
+  nums: m => ({ "上半身の前傾角": [m.lean, "°"], "仙骨（＋後ろ／−前）": [m.sacAng, "°"], "背骨の曲がり（＋丸まり）": [m.dev * 100, "%"],
+                "目線（＋上／−下）": [m.gaze, "°"], "頭の前後位置": [m.t * 100, "%"] }),
+  sampleSrc: "sample-side.jpg", anchors: ["rear", "front"], mirrorCheck: true,
+  cmp: m => `仙骨 ${m.text.sacrum}／背骨 ${m.text.spine.split("（")[0]}／前傾 ${m.text.lean}／頭 ${m.text.headpos.split("（")[0]}`,
+  accent: () => C.tri,
+  keys: () => ["rear", "front", "headTop", "hip", "shoulder", "ear", "nose", "backTop", "backMid", "sacTop", "sacBot"],
+  color: k => ["rear", "front", "headTop"].includes(k) ? C.tri : (k === "ear" || k === "nose") ? C.head
+            : k.startsWith("sac") ? C.sac : k.startsWith("back") ? C.ok : C.body,
+  defaults: (W, H) => ({
+    rear: { x: W * .2, y: H * .9 }, front: { x: W * .8, y: H * .9 }, headTop: { x: W * .55, y: H * .12 },
+    hip: { x: W * .45, y: H * .52 }, shoulder: { x: W * .55, y: H * .3 }, ear: { x: W * .58, y: H * .22 }, nose: { x: W * .63, y: H * .23 },
+    backTop: { x: W * .5, y: H * .3 }, backMid: { x: W * .45, y: H * .4 }, sacTop: { x: W * .4, y: H * .47 }, sacBot: { x: W * .39, y: H * .55 } }),
+  swap(p, noRetrace) {
+    const t = p.rear; p.rear = p.front; p.front = t;
+    if (!noRetrace && p._seg) {
+      const bc = backContour(p._seg.seg, p._seg.idx, p.hip, p.shoulder, Math.sign(p.front.x - p.rear.x) || 1);
+      if (bc) { p.sacBot = bc[0]; p.sacTop = bc[3]; p.backMid = bc[6]; p.backTop = bc[9]; p._backGuess = false; }
+    }
+  },
+  onDrag(p, k) { if (k.startsWith("sac") || k.startsWith("back")) p._backGuess = false; },
+  auto(W, H, P, seg, m, notes) {
+    const p = SIDE.defaults(W, H);
+    let dir = 0;
+    if (P) {
+      const Ls = [11, 23, 7].map(P), Rs = [12, 24, 8].map(P);
+      const s = (Ls[0].v + Ls[1].v + Ls[2].v) >= (Rs[0].v + Rs[1].v + Rs[2].v) ? Ls : Rs;
+      p.shoulder = s[0]; p.hip = s[1]; p.ear = s[2]; p.nose = P(0);
+      dir = Math.sign(p.nose.x - p.ear.x) || Math.sign(p.shoulder.x - p.hip.x);
+      const hl = dist(p.ear, p.shoulder);
+      p.headTop = { x: p.ear.x, y: p.ear.y - hl * .9 };
+    } else notes.push("進行方向が分かりません。前後の点を確認してください");
+    if (!dir) dir = 1;
+    if (seg) {
+      const c = contactsFromMask(seg, m.bikeIdx);
+      if (c) { p._wheelsOk = true; if (dir > 0) { p.rear = c.left; p.front = c.right; } else { p.rear = c.right; p.front = c.left; } }
+      else notes.push("タイヤの接地点を取れませんでした");
+      if (P) {
+        const ht = headTopFromMask(seg, m.personIdx, p.ear, p.shoulder); if (ht) p.headTop = ht;
+        const bc = backContour(seg, m.personIdx, p.hip, p.shoulder, dir);
+        if (bc) { p.sacBot = bc[0]; p.sacTop = bc[3]; p.backMid = bc[6]; p.backTop = bc[9]; p._backOk = true; }
+        Object.defineProperty(p, "_seg", { value: { seg, idx: m.personIdx }, enumerable: false, writable: true });
+      }
+    }
+    if (P && !p._backOk) {
+      const L = dist(p.hip, p.shoulder) || 1, u = { x: (p.shoulder.x - p.hip.x) / L, y: (p.shoulder.y - p.hip.y) / L };
+      let nb = { x: -u.y, y: u.x }; if (nb.x * dir > 0) nb = { x: -nb.x, y: -nb.y };
+      const at = (t, o) => ({ x: p.hip.x + u.x * L * t + nb.x * L * o, y: p.hip.y + u.y * L * t + nb.y * L * o });
+      p.sacBot = at(0, .25); p.sacTop = at(.3, .25); p.backMid = at(.6, .25); p.backTop = at(.9, .2);
+      p._backGuess = true; notes.push("背中の輪郭を取れませんでした。ピンク・緑の点を背中に合わせてください");
+    }
+    if (!p._wheelsOk && dir < 0) SIDE.swap(p, true);
+    if (!P) { // place back handles relative to defaults
+      p.backTop = { x: p.shoulder.x - 20, y: p.shoulder.y }; p.backMid = { x: p.hip.x - 30, y: (p.hip.y + p.shoulder.y) / 2 };
+    }
+    return p;
+  },
+  measure(v) {
+    const P = v.pts;
+    const gx = P.front.x - P.rear.x, gy = P.front.y - P.rear.y, gl = Math.hypot(gx, gy);
+    const ok = gl >= 10;
+    const ux = ok ? gx / gl : 1, uy = ok ? gy / gl : 0;
+    let up = { x: uy, y: -ux }; if (up.y > 0) up = { x: -up.x, y: -up.y };
+    const angFromUp = (a, b) => { const vx = b.x - a.x, vy = b.y - a.y; return deg(Math.atan2(vx * ux + vy * uy, vx * up.x + vy * up.y)); };
+    const lean = angFromUp(P.hip, P.shoulder);
+    const neck = angFromUp(P.shoulder, P.ear) - lean;
+    const ex = P.nose.x - P.ear.x, ey = P.nose.y - P.ear.y;
+    const gaze = deg(Math.atan2(ex * up.x + ey * up.y, Math.abs(ex * ux + ey * uy) || 1e-6));
+    const t = ok ? ((P.headTop.x - P.rear.x) * ux + (P.headTop.y - P.rear.y) * uy) / gl : NaN;
+    const apex = angleAt(P.headTop, P.rear, P.front), aRear = angleAt(P.rear, P.front, P.headTop), aFront = angleAt(P.front, P.rear, P.headTop);
+    // sacrum: line sacBot -> sacTop, angle from up (+ = top toward front => sacrum points to the rear)
+    const sacAng = angFromUp(P.sacBot, P.sacTop) - lean;   // relative to the upper body
+    let sacrum, sacKey;
+    if (sacAng > SACRUM_REAR) { sacrum = "後ろ（リア）向き"; sacKey = "rear"; }
+    else if (sacAng < SACRUM_FRONT) { sacrum = "前（フロント）向き"; sacKey = "front"; }
+    else { sacrum = "立っている"; sacKey = "up"; }
+    // spine: deviation of backMid from chord sacTop->backTop (+ = bulging toward the back => rounded)
+    const cx = P.backTop.x - P.sacTop.x, cy = P.backTop.y - P.sacTop.y, cl = Math.hypot(cx, cy) || 1;
+    let nx = -cy / cl, ny = cx / cl; if (nx * ux + ny * uy > 0) { nx = -nx; ny = -ny; }   // back = rearward
+    const dev = ((P.backMid.x - P.sacTop.x) * nx + (P.backMid.y - P.sacTop.y) * ny) / cl;
+    let spine; if (dev > SPINE_ROUND) spine = "丸まっている（曲がっている）"; else if (dev < SPINE_ARCH) spine = "反っている"; else spine = "まっすぐ";
+    const vids = ["sacrum", "form"];
+    if (Math.abs(gaze) > 10) vids.push("eyes"); else vids.push("pos1");
+    return { lean, neck, gaze, t, apex, aRear, aFront, sacAng, sacKey, dev, up, ok, verdict: (P._backGuess ? "ピンク・緑の点を背中に合わせてください：" : "") + `仙骨：${sacrum}／背骨：${spine}`, level: "", vids,
+      text: { sacrum: `${sacrum}（${sacAng >= 0 ? "+" : ""}${sacAng.toFixed(0)}°）`, spine: `${spine}（${(dev * 100).toFixed(1)}%）`,
+              lean: ok ? `${lean.toFixed(1)}°（0°=直立）` : "—",
+              gaze: !ok ? "—" : Math.abs(gaze) < 1 ? "地面と平行" : `地面から${gaze > 0 ? "上" : "下"}へ ${Math.abs(gaze).toFixed(1)}°（理想は平行）`,
+              neck: ok ? `${neck >= 0 ? "前へ" : "後ろへ"} ${Math.abs(neck).toFixed(1)}°` : "—",
+              headpos: ok ? `${(t * 100).toFixed(0)}%（後輪0%→前輪100%）` : "—",
+              apex: `${apex.toFixed(1)}°（後輪側 ${aRear.toFixed(0)}° / 前輪側 ${aFront.toFixed(0)}°）` } };
+  },
+  render(v, ctx, g, m) {
+    const P = v.pts;
+    ctx.save(); ctx.fillStyle = "rgba(255,225,77,.10)";
+    ctx.beginPath(); ctx.moveTo(P.rear.x, P.rear.y); ctx.lineTo(P.front.x, P.front.y); ctx.lineTo(P.headTop.x, P.headTop.y); ctx.closePath(); ctx.fill(); ctx.restore();
+    line(ctx, P.rear, P.front, C.tri, g.LW); line(ctx, P.rear, P.headTop, C.tri, g.LW); line(ctx, P.front, P.headTop, C.tri, g.LW);
+    const L = dist(P.shoulder, P.hip) * 1.3;
+    line(ctx, P.hip, { x: P.hip.x + m.up.x * L, y: P.hip.y + m.up.y * L }, "rgba(255,255,255,.45)", g.LW * .6, [g.LW * 2, g.LW * 2]);
+    line(ctx, P.hip, P.shoulder, C.body, g.LW * .8);
+    // back line (smooth through 3 points)
+    ctx.save(); ctx.strokeStyle = C.ok; ctx.lineWidth = g.LW; ctx.lineCap = "round"; ctx.beginPath();
+    ctx.moveTo(P.sacTop.x, P.sacTop.y);
+    const cpx = 2 * P.backMid.x - (P.sacTop.x + P.backTop.x) / 2, cpy = 2 * P.backMid.y - (P.sacTop.y + P.backTop.y) / 2;
+    ctx.quadraticCurveTo(cpx, cpy, P.backTop.x, P.backTop.y); ctx.stroke(); ctx.restore();
+    // sacrum arrow: from sacTop through sacBot, pointing where the sacrum points
+    // arrow: where the tip of the sacrum points (lower-back line extended downward)
+    const sl = dist(P.sacTop, P.sacBot) || 1, k = Math.max(1.8, dist(P.hip, P.shoulder) * .6 / sl);
+    arrow(ctx, P.sacTop, extend(P.sacTop, P.sacBot, k), C.sac, g.LW * 1.1);
+    line(ctx, P.ear, extend(P.ear, P.nose, 4), C.head, g.LW * .7, [g.LW * 1.6, g.LW]);
+    const tip = extend(P.sacTop, P.sacBot, k);
+    label(ctx, `仙骨 ${m.text.sacrum.split("（")[0]}`, tip.x + g.R, tip.y + g.FS * .5, C.sac, g.FS);
+    label(ctx, `背骨 ${m.text.spine.split("（")[0]}`, P.backMid.x + g.R * 1.5, P.backMid.y, C.ok, g.FS);
+    if (m.ok) {
+      label(ctx, `前傾 ${m.lean.toFixed(0)}°`, P.shoulder.x + g.R, P.shoulder.y - g.R, C.body, g.FS);
+      label(ctx, `頭 ${(m.t * 100).toFixed(0)}%`, (P.rear.x + P.front.x) / 2, (P.rear.y + P.front.y) / 2 + g.FS * 1.6, C.tri, g.FS);
+    }
+    label(ctx, `${m.apex.toFixed(0)}°`, P.headTop.x + g.R, P.headTop.y - g.R, C.tri, g.FS);
+  },
+  summary: m => ["【横】" + m.verdict, `前傾 ${m.text.lean}`, `目線 ${m.text.gaze.split("（")[0]}`, `頭の位置 ${m.text.headpos}`],
+};
+
+// ================= wiring =================
+const front = new View("v-front", "f-front", FRONT);
+const side = new View("v-side", "f-side", SIDE);
+startLoad().catch(() => {});
+
+const saveBtn = document.getElementById("save"), outImg = document.getElementById("outImg"), outNote = document.getElementById("outNote");
+function updateSave() { saveBtn.disabled = !(front.pts || side.pts); }
+function hideOut() { outImg.style.display = "none"; outNote.style.display = "none"; }
+
+saveBtn.addEventListener("click", () => {
+  const views = [front, side].filter(v => v.pts);
+  if (!views.length) return;
+  const W = 1200;
+  const parts = views.map(v => { v.draw(true); const h = Math.round(v.cv.height * W / v.cv.width); return { v, h }; });
+  const gap = 12, out = document.createElement("canvas");
+  out.width = W; out.height = parts.reduce((s, p) => s + p.h, 0) + gap * (parts.length - 1);
+  const o = out.getContext("2d"); o.fillStyle = "#0f1115"; o.fillRect(0, 0, out.width, out.height);
+  let y = 0; for (const p of parts) { o.drawImage(p.v.cv, 0, y, W, p.h); y += p.h + gap; }
+  const logo = document.getElementById("logo");
+  try {
+    if (logo.complete && logo.naturalWidth) {
+      const lh = 64, lw = logo.naturalWidth * lh / logo.naturalHeight;
+      o.globalAlpha = .92; o.drawImage(logo, W - lw - 16, out.height - lh - 16, lw, lh); o.globalAlpha = 1;
+    }
+  } catch (e) { /* ignore */ }
+  outImg.src = out.toDataURL("image/jpeg", .9);
+  outImg.style.display = "block"; outNote.style.display = "block";
+  views.forEach(v => v.draw());
+  outImg.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+</script>
+</body>
+</html>

@@ -98,6 +98,18 @@
   .fcard .fc { font-weight:800; font-size:12px; color:var(--tri); }
   select { background:#2b303b; color:var(--text); border:0; border-radius:8px; padding:6px; font-size:14px; }
 </style>
+<script>
+// LINEなどのアプリ内ブラウザではAIが動かないことがあるため、Safari／Chromeで開き直す
+(function () {
+  try {
+    var ua = navigator.userAgent || "";
+    if (/ Line\//i.test(ua) && !/[?&]openExternalBrowser=1/.test(location.search)) {
+      var q = location.search ? location.search + "&" : "?";
+      location.replace(location.origin + location.pathname + q + "openExternalBrowser=1" + location.hash);
+    }
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 <header>
@@ -110,6 +122,10 @@
 </header>
 
 <main>
+  <div id="inAppNote" style="display:none;background:#3a2a10;border:1px solid var(--bike);border-radius:12px;padding:12px;margin-top:10px;font-size:14px;line-height:1.6">
+    ⚠️ <b>アプリの中の画面で開いています。</b>このままだとAIの自動測定が動かないことがあります。<br>
+    画面の右上か右下の「…」や共有ボタンから<b>「Safariで開く」「ブラウザで開く」</b>を選んでください。
+  </div>
   <div id="hostNote" style="display:none;background:#3a2a10;border:1px solid var(--bike);border-radius:12px;padding:12px;margin-top:10px;font-size:14px;line-height:1.6">
     ⚠️ このページ（Claudeの中）ではAIの自動読み取りが動きません。<br>
     <a href="https://shikouyoshida-maker.github.io/riding-position-checker/" target="_blank" rel="noopener" style="color:var(--bike);font-weight:800;font-size:16px">▶ 公開版（AIが動くページ）を開く</a><br>
@@ -288,6 +304,7 @@ const SOURCES = [
 ];
 try { if ("serviceWorker" in navigator && location.protocol === "https:" && location.hostname.endsWith("github.io")) navigator.serviceWorker.register("sw.js"); } catch (e) {}
 try { if (!location.hostname.endsWith("github.io")) document.getElementById("hostNote").style.display = "block"; } catch (e) {}
+try { if (/ Line\/|Instagram|FBAN|FBAV|FB_IAB|Twitter|TikTok|musical_ly|BytedanceWebview|; wv\)/i.test(navigator.userAgent)) document.getElementById("inAppNote").style.display = "block"; } catch (e) {}
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 let loadP = null, loadErr = "", loadStage = "";
 // download the big files first (with progress); the service worker keeps them on the device

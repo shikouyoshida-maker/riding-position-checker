@@ -1141,6 +1141,15 @@ const FRONT = {
         if (n >= 2 && cc.y - sy / n > H * .08) { p.bikeB = cc; p.bikeT = { x: sx / n, y: sy / n }; ok = true; }
       }
     }
+    if (!ok && !rear && P && cc) {
+      // タンクが隠れているとき：左右のグリップの真ん中（ハンドルの中心）を車体の中心線として仮置き
+      const vis = ids => ids.filter(i => P(i).v > .4).length;
+      if (vis([15, 17, 19, 21]) >= 2 && vis([16, 18, 20, 22]) >= 2) {
+        const gm = mid(p.gripL, p.gripR);
+        if (cc.y - gm.y > H * .08) { p.bikeB = cc; p.bikeT = gm; ok = true;
+          notes.push("タンクが隠れていたので、ハンドルの中心で仮置きしました。上のオレンジの点をタンクの中心に合わせてください"); }
+      }
+    }
     if (!ok && rear && P && (cc || ax)) {
       const base = cc || ax.bottom, tl = dist(p.hip, p.shoulder) || H * .15;
       const dn = { x: base.x - p.hip.x, y: base.y - p.hip.y }, dl = Math.hypot(dn.x, dn.y) || 1;

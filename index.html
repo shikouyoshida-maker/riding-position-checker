@@ -74,6 +74,17 @@
   .cropper .cbox { background:var(--panel); border-radius:14px; padding:12px; max-width:100%; }
   .cropper .ctitle { font-weight:800; font-size:15px; margin-bottom:4px; }
   .cropper canvas { display:block; margin:8px auto; border-radius:8px; background:#000; }
+  .howto { background:#1b2130; border:1px solid #2f3a52; border-radius:12px; margin-top:10px; font-size:14px; line-height:1.7; }
+  .howto > summary { cursor:pointer; padding:12px; font-weight:800; font-size:16px; list-style:none; }
+  .howto > summary::-webkit-details-marker { display:none; }
+  .howto > summary::after { content:"▼ ひらく"; float:right; font-size:12px; color:#9aa4b8; font-weight:400; margin-top:3px; }
+  .howto[open] > summary::after { content:"▲ とじる"; }
+  .howto .hbody { padding:0 12px 12px; }
+  .howto h4 { margin:14px 0 4px; font-size:15px; color:var(--bike); }
+  .howto ol, .howto ul { margin:4px 0; padding-left:1.4em; }
+  .howto li { margin:2px 0; }
+  .howto .tip { background:#11151f; border-radius:8px; padding:8px 10px; margin-top:6px; font-size:13px; }
+  #howBtn { margin-left:auto; flex:none; font-size:13px; padding:8px 10px; }
   .saveAsk { background:#1f3326; border-radius:10px; padding:10px; font-size:14px; line-height:1.6; margin-top:8px; }
   button.primaryBtn { background:var(--ok); color:#0b1a10; }
   .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
@@ -119,6 +130,7 @@
     <h1>ライディングポジションチェッカー</h1>
     <p>正面と横の写真を撮ると、AIが自動で角度ラインを入れます</p>
   </div>
+  <button id="howBtn" type="button">📖 使い方</button>
 </header>
 
 <main>
@@ -131,6 +143,67 @@
     <a href="https://shikouyoshida-maker.github.io/riding-position-checker/" target="_blank" rel="noopener" style="color:var(--bike);font-weight:800;font-size:16px">▶ 公開版（AIが動くページ）を開く</a><br>
     <span class="note">shikouyoshida-maker.github.io/riding-position-checker/ — Safariで開いて「ホーム画面に追加」すると便利です。</span>
   </div>
+  <details class="howto" id="howto">
+    <summary>📖 使い方（はじめての方へ）</summary>
+    <div class="hbody">
+      <h4>① まずブラウザで開く</h4>
+      <ul>
+        <li>LINEやInstagramの中で開くと、AIが動かないことがあります。iPhoneは<b>Safari</b>、Androidは<b>Chrome</b>で開いてください（LINEからは自動で切り替わります）。</li>
+        <li>Safariの共有ボタン（□に↑）→<b>「ホーム画面に追加」</b>で、アプリのように使えます。</li>
+        <li>初めてのときはAIの準備に少し時間がかかります。電波の良い場所で開いてください。2回目からは速くなります。</li>
+      </ul>
+
+      <h4>② 写真の撮り方</h4>
+      <ul>
+        <li><b>正面から</b>：コーナリング中を、真正面（または真後ろ）から。タイヤの接地面からヘルメットまで全部写るように。</li>
+        <li><b>横から</b>：バイクにまたがった姿勢を真横から。<b>前後のタイヤが両方</b>写るように。</li>
+        <li>人とバイクが大きく写っているほど、AIが正確に読み取れます。</li>
+      </ul>
+
+      <h4>③ 測る</h4>
+      <ol>
+        <li>「正面から」か「横から」の<b>📷 撮る／選ぶ</b>を押して写真を選びます。</li>
+        <li>「写真を枠に合わせる」画面が出ます。ガイドの形（地面の線・タイヤ・頭の丸）に合わせて、<b>指でずらす・2本指で拡大縮小</b>し、<b>✅ この枠で決定</b>。合わせずに使うときは「そのまま使う」。</li>
+        <li>AIが自動で角度ラインを入れます。</li>
+        <li>点がずれていたら、<b>丸い点を指で動かして</b>直します。角度はすぐに計算し直されます。</li>
+      </ol>
+      <div class="tip">正面写真でオレンジの点が出たら、<b>下の点をタイヤの接地面のまん中、上の点をタンクのまん中</b>に合わせてください（バイクの角度になります）。真後ろから撮った写真は「真後ろから撮った写真」にチェックを入れます。</div>
+
+      <h4>④ 結果の見方</h4>
+      <ul>
+        <li><b>正面</b>：バイクの角度と上半身の角度、鼻頭の位置を表示します。吉田流のおすすめは、<b>鼻頭がバンクしている側のグリップの中心</b>にくる姿勢（緑の帯）。</li>
+        <li><b>横</b>：上半身の前傾角、<b>仙骨の向き</b>、背骨が丸まっているか、目線を表示します。</li>
+        <li>結果の下に、その姿勢に合った<b>解説動画</b>が出ます。タップで再生できます。</li>
+      </ul>
+
+      <h4>⑤ 保存する</h4>
+      <ol>
+        <li>角度が決まったら、写真のすぐ下の<b>✅ 角度OK（保存へ）</b>を押します。</li>
+        <li>「保存しますか？」で<b>💾 保存する</b>を押したときだけ保存されます。</li>
+      </ol>
+      <div class="tip">記録は<b>あなたのスマホの中だけ</b>に保存されます。写真がどこかに送られることはありません。</div>
+
+      <h4>⑥ 以前の自分と比べる</h4>
+      <ol>
+        <li><b>📂 以前と比べる</b>を押して、比べたい記録を選びます。数値の変化が出ます。</li>
+        <li><b>🔁 今回の写真に透かして重ねる</b>をオンにすると、以前の写真がバイクの位置に合わせて重なります。スライダーで濃さを変えられます。</li>
+        <li>いらない記録は「☑ 選択して削除」「🗑 すべて削除」で消せます。</li>
+      </ol>
+
+      <h4>⑦ その他</h4>
+      <ul>
+        <li><b>💾 2枚まとめて保存用画像を作る</b>：正面と横の結果を1枚の画像にします。SNSや先生に見せるときに。</li>
+        <li><b>🎬 場面さがし</b>：走っている動画や写真を選ぶと、AIが「正面の左右コーナー・直線」「真横の加速・減速・一定」の場面を探して分けます。測りたい写真を探すときに便利です。</li>
+      </ul>
+
+      <h4>⑧ うまくいかないとき</h4>
+      <ul>
+        <li><b>「AIモデルを読み込めませんでした」</b>：Safari／Chromeで開いているか確認し、電波の良い場所で<b>🔄 自動検出し直す</b>。それでもだめなら、点を手で合わせれば角度は計算されます。</li>
+        <li><b>線がずれる</b>：人やバイクが小さい・暗い・重なっている写真は外れやすいです。点を指で直すか、撮り直してください。</li>
+        <li><b>新しい機能が出ない</b>：アプリを一度閉じて開き直してください。</li>
+      </ul>
+    </div>
+  </details>
   <!-- ===== 正面 ===== -->
   <section class="view" id="v-front">
     <div class="vhead">
@@ -303,6 +376,11 @@ const SOURCES = [
     seg: "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite" },
 ];
 try { if ("serviceWorker" in navigator && location.protocol === "https:" && location.hostname.endsWith("github.io")) navigator.serviceWorker.register("sw.js"); } catch (e) {}
+try {
+  const ho = document.getElementById("howto");
+  if (!localStorage.getItem("rpc.howtoSeen")) { ho.open = true; localStorage.setItem("rpc.howtoSeen", "1"); }
+  document.getElementById("howBtn").addEventListener("click", () => { ho.open = true; ho.scrollIntoView({ behavior: "smooth", block: "start" }); });
+} catch (e) {}
 try { if (!location.hostname.endsWith("github.io")) document.getElementById("hostNote").style.display = "block"; } catch (e) {}
 try { if (/ Line\/|Instagram|FBAN|FBAV|FB_IAB|Twitter|TikTok|musical_ly|BytedanceWebview|; wv\)/i.test(navigator.userAgent)) document.getElementById("inAppNote").style.display = "block"; } catch (e) {}
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);

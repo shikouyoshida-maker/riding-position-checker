@@ -91,6 +91,11 @@
 </header>
 
 <main>
+  <div id="hostNote" style="display:none;background:#3a2a10;border:1px solid var(--bike);border-radius:12px;padding:12px;margin-top:10px;font-size:14px;line-height:1.6">
+    ⚠️ このページ（Claudeの中）ではAIの自動読み取りが動きません。<br>
+    <a href="https://shikouyoshida-maker.github.io/riding-position-checker/" target="_blank" rel="noopener" style="color:var(--bike);font-weight:800;font-size:16px">▶ 公開版（AIが動くページ）を開く</a><br>
+    <span class="note">shikouyoshida-maker.github.io/riding-position-checker/ — Safariで開いて「ホーム画面に追加」すると便利です。</span>
+  </div>
   <!-- ===== 正面 ===== -->
   <section class="view" id="v-front">
     <div class="vhead">
@@ -245,6 +250,7 @@ const SOURCES = [
     seg: "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite" },
 ];
 try { if ("serviceWorker" in navigator && location.protocol === "https:" && location.hostname.endsWith("github.io")) navigator.serviceWorker.register("sw.js"); } catch (e) {}
+try { if (!location.hostname.endsWith("github.io")) document.getElementById("hostNote").style.display = "block"; } catch (e) {}
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 let loadP = null, loadErr = "", loadStage = "";
 // download the big files first (with progress); the service worker keeps them on the device

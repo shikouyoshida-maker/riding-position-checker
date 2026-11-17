@@ -476,11 +476,73 @@ function getSamples() {
   if (!SAMPLES_P) SAMPLES_P = fetch("samples/samples.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : []).catch(() => []);
   return SAMPLES_P;
 }
+// 大きくバンクしているとAIが人を見つけにくいので、見つからない・自信が低いときは写真を傾けて探し直す
+function poseScore(lm) { const k = [0, 11, 12, 23, 24, 25, 26]; return k.reduce((t, i) => t + (lm[i].visibility ?? 1), 0) / k.length; }
 function runPose(m, canvas) {
-  const r = m.pose.detect(canvas);
-  const lm = r.landmarks && r.landmarks[0];
-  if (!lm) return null;
-  return i => ({ x: lm[i].x * canvas.width, y: lm[i].y * canvas.height, v: lm[i].visibility ?? 1 });
+  const W = canvas.width, H = canvas.height;
+  const r0 = m.pose.detect(canvas), lm0 = r0.landmarks && r0.landmarks[0];
+  let best = lm0 ? { lm: lm0, s: poseScore(lm0), a: 0 } : null;
+  if (!best || best.s < .75) {
+    const D = Math.ceil(Math.hypot(W, H)), c = document.createElement("canvas"); c.width = D; c.height = D;
+    const g = c.getContext("2d");
+    for (const a of [-30, 30, -50, 50]) {
+      const rad = a * Math.PI / 180;
+      g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = "#000"; g.fillRect(0, 0, D, D);
+      g.translate(D / 2, D / 2); g.rotate(rad); g.drawImage(canvas, -W / 2, -H / 2);
+      let r; try { r = m.pose.detect(c); } catch (e) { continue; }
+      const lm = r.landmarks && r.landmarks[0]; if (!lm) continue;
+      const s = poseScore(lm);
+      if (!best || s > best.s + .05) {
+        const cs = Math.cos(rad), sn = Math.sin(rad);
+        best = { s, a, lm: lm.map(q => { const X = q.x * D - D / 2, Y = q.y * D - D / 2;
+          return { x: (cs * X + sn * Y + W / 2) / W, y: (-sn * X + cs * Y + H / 2) / H, visibility: q.visibility }; }) };
+      }
+    }
+  }
+  if (!best) return null;
+  const lm = best.lm;
+  return i => ({ x: lm[i].x * W, y: lm[i].y * H, v: lm[i].visibility ?? 1 });
+}
+// 写真に複数のバイクが写っているときは、ライダーが乗っている1台（なければ一番大きい1台）だけを残す
+function focusBike(seg, idx, P) {
+  if (!seg) return seg;
+  const { mask, w, h } = seg, N = w * h;
+  const bin = new Uint8Array(N); let any = 0;
+  for (let i = 0; i < N; i++) if (mask[i] === idx) { bin[i] = 1; any++; }
+  if (!any) return seg;
+  // すき間を少し埋めてからつながりを数える（ライダーの体で分かれた部分を1台にまとめる）
+  const r = Math.max(1, Math.round(Math.min(w, h) * .02)), tmp = new Uint8Array(N), dil = new Uint8Array(N);
+  for (let y = 0; y < h; y++) { let c = 0; const o = y * w;
+    for (let x = -r; x < w; x++) { if (x + r < w) c += bin[o + x + r]; if (x - r - 1 >= 0) c -= bin[o + x - r - 1]; if (x >= 0) tmp[o + x] = c > 0 ? 1 : 0; } }
+  for (let x = 0; x < w; x++) { let c = 0;
+    for (let y = -r; y < h; y++) { if (y + r < h) c += tmp[(y + r) * w + x]; if (y - r - 1 >= 0) c -= tmp[(y - r - 1) * w + x]; if (y >= 0) dil[y * w + x] = c > 0 ? 1 : 0; } }
+  const lab = new Int32Array(N), comps = []; let nl = 0; const st = new Int32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (!dil[i] || lab[i]) continue;
+    nl++; let sp = 0, area = 0, x0 = w, x1 = 0, y0 = h, y1 = 0; st[sp++] = i; lab[i] = nl;
+    while (sp) { const j = st[--sp], x = j % w, y = (j - x) / w; if (bin[j]) area++;
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && dil[j - 1] && !lab[j - 1]) { lab[j - 1] = nl; st[sp++] = j - 1; }
+      if (x < w - 1 && dil[j + 1] && !lab[j + 1]) { lab[j + 1] = nl; st[sp++] = j + 1; }
+      if (y > 0 && dil[j - w] && !lab[j - w]) { lab[j - w] = nl; st[sp++] = j - w; }
+      if (y < h - 1 && dil[j + w] && !lab[j + w]) { lab[j + w] = nl; st[sp++] = j + w; } }
+    comps.push({ id: nl, area, x0, x1, y0, y1 });
+  }
+  if (comps.length < 2) return seg;
+  const big = Math.max(...comps.map(c => c.area));
+  let pick = null;
+  if (P) {   // ライダーの腰・ひざに一番近い1台（小さすぎるものは除く）
+    const pts = [mid(P(23), P(24)), P(25), P(26)].map(q => ({ x: q.x / seg.sx, y: q.y / seg.sy }));
+    let bd = Infinity;
+    for (const c of comps) { if (c.area < big * .15) continue;
+      const d = Math.min(...pts.map(q => Math.hypot(Math.max(c.x0 - q.x, 0, q.x - c.x1), Math.max(c.y0 - q.y, 0, q.y - c.y1))));
+      if (d < bd - 1 || (Math.abs(d - bd) <= 1 && c.area > pick.area)) { bd = d; pick = c; } }
+  }
+  if (!pick) pick = comps.reduce((a, b) => b.area > a.area ? b : a);
+  const nm = mask.slice();
+  for (let i = 0; i < N; i++) if (nm[i] === idx && lab[i] !== pick.id) nm[i] = 0;
+  return { ...seg, mask: nm, at: (x, y) => { const mx = Math.floor(x / seg.sx), my = Math.floor(y / seg.sy);
+    if (mx < 0 || my < 0 || mx >= w || my >= h) return -1; return nm[my * w + mx]; } };
 }
 function runSeg(m, canvas) {
   const r = m.seg.segment(canvas);
@@ -917,6 +979,7 @@ class View {
       try { pose = runPose(m, this.work); if (!pose) notes.push("ライダーが見つかりませんでした"); }
       catch (e) { console.warn(e); notes.push("ライダーの検出に失敗"); }
       try { seg = runSeg(m, this.work); } catch (e) { console.warn(e); notes.push("輪郭の検出に失敗"); }
+      try { seg = focusBike(seg, m.bikeIdx, pose); } catch (e) { console.warn(e); }
       this._det = { W, H, pose, seg, m };
       this.pts = this.spec.auto(W, H, pose, seg, m, notes, k => this.opt(k));
       this.draw();

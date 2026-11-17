@@ -23,7 +23,7 @@ jobs:
           set -e
           V=0.10.14
           mkdir -p _site/mp/wasm
-          cp -r index.html logo.png apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest _site/ 2>/dev/null || true
+          cp -r index.html sw.js logo.png apple-touch-icon.png icon-192.png icon-512.png manifest.webmanifest _site/ 2>/dev/null || true
           for f in sample-front.jpg sample-side.jpg; do [ -f "$f" ] && cp "$f" _site/ || true; done
           curl -fsSL "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@$V/vision_bundle.mjs" -o _site/mp/vision_bundle.mjs
           for f in vision_wasm_internal.js vision_wasm_internal.wasm vision_wasm_nosimd_internal.js vision_wasm_nosimd_internal.wasm; do

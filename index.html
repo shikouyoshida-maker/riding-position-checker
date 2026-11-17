@@ -244,10 +244,27 @@ const SOURCES = [
     pose: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
     seg: "https://storage.googleapis.com/mediapipe-models/image_segmenter/deeplab_v3/float32/1/deeplab_v3.tflite" },
 ];
+try { if ("serviceWorker" in navigator && location.protocol === "https:" && location.hostname.endsWith("github.io")) navigator.serviceWorker.register("sw.js"); } catch (e) {}
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 let loadP = null, loadErr = "", loadStage = "";
+// download the big files first (with progress); the service worker keeps them on the device
+async function prefetch(src) {
+  const files = [src.wasm + "/vision_wasm_internal.wasm", src.pose, src.seg];
+  const est = [9.4e6, 9.4e6, 2.8e6], total = est.reduce((a, b) => a + b, 0);
+  let done = 0;
+  for (let i = 0; i < files.length; i++) {
+    const r = await fetch(files[i]);
+    if (!r.ok) throw new Error(`${files[i].split("/").pop()} ${r.status}`);
+    if (!r.body || !r.body.getReader) { await r.arrayBuffer(); done += est[i]; continue; }
+    const rd = r.body.getReader(); let got = 0;
+    for (;;) { const { done: d, value } = await rd.read(); if (d) break; got += value.length;
+      loadStage = `AIをダウンロード中 ${Math.min(99, Math.round((done + Math.min(got, est[i])) / total * 100))}%（初回だけ約22MB）`; }
+    done += est[i];
+  }
+}
 async function loadFrom(src) {
-  loadStage = `${src.name}からAIの本体を読み込み中`;
+  if (src.name === "このサイト") { try { await prefetch(src); } catch (e) { throw e; } }
+  loadStage = `${src.name}からAIの本体を準備中`;
   const { FilesetResolver, PoseLandmarker, ImageSegmenter } = await import(src.base + "vision_bundle.mjs");
   const fileset = await FilesetResolver.forVisionTasks(src.wasm);
   // iPhone/iPad: CPU first (GPU mode is unstable in iOS Safari); others: GPU first

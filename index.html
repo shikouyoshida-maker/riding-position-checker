@@ -70,6 +70,10 @@
   .sampleChips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
   .sampleChips button { padding:6px 10px; font-size:12px; border-radius:16px; }
   .sampleChips button.on { background:var(--sac); color:#1a0b12; }
+  .cropper { position:fixed; inset:0; background:rgba(0,0,0,.88); z-index:20; display:flex; align-items:center; justify-content:center; padding:12px; overflow:auto; }
+  .cropper .cbox { background:var(--panel); border-radius:14px; padding:12px; max-width:100%; }
+  .cropper .ctitle { font-weight:800; font-size:15px; margin-bottom:4px; }
+  .cropper canvas { display:block; margin:8px auto; border-radius:8px; background:#000; }
   .saveAsk { background:#1f3326; border-radius:10px; padding:10px; font-size:14px; line-height:1.6; margin-top:8px; }
   button.primaryBtn { background:var(--ok); color:#0b1a10; }
   .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
@@ -124,6 +128,9 @@
       <div class="prevLabel"></div>
       <img class="prevImg" alt="以前の記録">
       <div class="deltas"></div>
+      <label class="chk"><input type="checkbox" class="overlay"> 🔁 今回の写真に透かして重ねる</label>
+      <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
+      <div class="note cmpText"></div>
       <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
     </div>
     <div class="status"></div>
@@ -165,6 +172,9 @@
       <div class="prevLabel"></div>
       <img class="prevImg" alt="以前の記録">
       <div class="deltas"></div>
+      <label class="chk"><input type="checkbox" class="overlay"> 🔁 今回の写真に透かして重ねる</label>
+      <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
+      <div class="note cmpText"></div>
       <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
     </div>
     <div class="status"></div>
@@ -335,6 +345,27 @@ function loadModels(ms = 120000) {
   return Promise.race([startLoad(), to]).catch(() => null);
 }
 
+// points <-> 0..1 coordinates (so a saved photo can be overlaid at any size)
+function normPts(p, W, H) {
+  const o = {};
+  for (const [k, q] of Object.entries(p)) {
+    if (q && typeof q === "object" && "x" in q) o[k] = [q.x / W, q.y / H];
+    else if (k === "_groundY" && typeof q === "number") o[k] = { y: q / H };
+    else if (k === "_gripW" && typeof q === "number") o[k] = { w: q / W };
+    else if (typeof q === "boolean") o[k] = q;
+  }
+  return o;
+}
+function denormPts(o, W, H) {
+  const p = {};
+  for (const [k, q] of Object.entries(o || {})) {
+    if (Array.isArray(q)) p[k] = { x: q[0] * W, y: q[1] * H };
+    else if (k === "_groundY" && q && "y" in q) p[k] = q.y * H;
+    else if (k === "_gripW" && q && "w" in q) p[k] = q.w * W;
+    else p[k] = q;
+  }
+  return p;
+}
 let SAMPLES_P = null;
 function getSamples() {
   if (!SAMPLES_P) SAMPLES_P = fetch("samples/samples.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : []).catch(() => []);
@@ -470,8 +501,7 @@ class View {
     this.sample = null; this.sampleState = "none"; this.sampleCache = {}; this.sampleId = null; this.samplePicked = false;
     if (this.sec.querySelector(".overlay")) this.sec.querySelector(".overlay").addEventListener("change", e => {
       this.sec.querySelector(".oprow").style.display = e.target.checked ? "flex" : "none";
-      this.sec.querySelector(".sampleChips").style.display = e.target.checked ? "flex" : "none";
-      if (e.target.checked) this.initSamples(); else this.draw();
+      if (e.target.checked) this.loadPastOverlay(); else { this.cmpText(""); this.draw(); }
     });
     if (this.sec.querySelector(".opacity")) this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
     this.prev = null;
@@ -527,7 +557,11 @@ class View {
     c.getContext("2d").drawImage(this.cv, 0, 0, c.width, c.height);
     const img = c.toDataURL("image/jpeg", .82);
     this.draw();
-    const rec = { id: this.recId, view: this.spec.name, img, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
+    const kr = Math.min(1, 1200 / Math.max(this.work.width, this.work.height)), rc = document.createElement("canvas");
+    rc.width = Math.round(this.work.width * kr); rc.height = Math.round(this.work.height * kr);
+    rc.getContext("2d").drawImage(this.work, 0, 0, rc.width, rc.height);
+    const raw = rc.toDataURL("image/jpeg", .85), pts = normPts(this.pts, this.work.width, this.work.height);
+    const rec = { id: this.recId, view: this.spec.name, img, raw, pts, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
     try { await Store.add(rec); this.status(Store.db ? `💾 ${fmtDate(rec.id)} の記録としてこのiPhoneに保存しました。` : "💾 一時保存しました（この画面を閉じると消えます）。"); }
     catch (e) { console.warn(e); this.status("⚠️ 保存できませんでした。"); return false; }
     if (this.sec.querySelector(".recList").style.display !== "none") this.renderList();
@@ -595,8 +629,25 @@ class View {
     row.append(yes, no); c.appendChild(row);
     c.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
+  // ---- 以前の自分の写真を重ねる ----
+  async loadPastOverlay() {
+    const r = this.prev; if (!r) return;
+    if (!r.raw || !r.pts) { this.sampleState = "none"; this.cmpText("この記録は重ねられません（この機能を入れたあとに保存した記録から重ねられます）。"); this.draw(); return; }
+    this.sampleState = "loading"; this.cmpText("以前の写真を準備中…");
+    try {
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = r.raw; });
+      const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
+      c.getContext("2d").drawImage(im, 0, 0);
+      if (this.prev !== r) return;
+      this.sample = { c, pts: denormPts(r.pts, c.width, c.height), def: { label: "以前 " + fmtDate(r.id) } }; this.sampleState = "ready";
+    } catch (e) { console.warn(e); this.sampleState = "none"; this.cmpText("以前の写真を読み込めませんでした。"); }
+    this.draw();
+  }
   showPrev(r) {
     this.prev = r;
+    this.sampleState = "none"; this.sample = null;
+    const ov = this.sec.querySelector(".prevBox .overlay");
+    if (ov && ov.checked) this.loadPastOverlay(); else this.cmpText("");
     const box = this.sec.querySelector(".prevBox"); box.style.display = "block";
     box.querySelector(".prevLabel").textContent = `以前の記録：${fmtDate(r.id)}　${r.verdict}`;
     box.querySelector(".prevImg").src = r.img;
@@ -605,7 +656,13 @@ class View {
     this.renderDeltas();
     this.sec.scrollIntoView({ behavior: "smooth", block: "start" });
   }
-  hidePrev() { this.prev = null; this.sec.querySelector(".prevBox").style.display = "none"; this.sec.querySelector(".curLabel").style.display = "none"; }
+  hidePrev() {
+    this.prev = null; this.sample = null; this.sampleState = "none";
+    const ov = this.sec.querySelector(".prevBox .overlay"); if (ov) ov.checked = false;
+    this.sec.querySelector(".prevBox .oprow").style.display = "none"; this.cmpText("");
+    this.sec.querySelector(".prevBox").style.display = "none"; this.sec.querySelector(".curLabel").style.display = "none";
+    this.draw();
+  }
   renderDeltas() {
     if (!this.prev) return;
     const el = this.sec.querySelector(".deltas");
@@ -700,11 +757,15 @@ class View {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     const url = URL.createObjectURL(f), im = new Image();
     im.onload = async () => {
-      const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
-      this.work.width = this.cv.width = Math.round(im.naturalWidth * k);
-      this.work.height = this.cv.height = Math.round(im.naturalHeight * k);
-      this.wctx.drawImage(im, 0, 0, this.work.width, this.work.height);
+      const framed = await cropToFrame(im, this.spec.name);
       URL.revokeObjectURL(url);
+      if (framed === undefined) return;                 // cancelled
+      const src = framed || im, sw = framed ? framed.width : im.naturalWidth, sh = framed ? framed.height : im.naturalHeight;
+      const k = Math.min(1, 1600 / Math.max(sw, sh));
+      this.work.width = this.cv.width = Math.round(sw * k);
+      this.work.height = this.cv.height = Math.round(sh * k);
+      this.wctx.drawImage(src, 0, 0, this.work.width, this.work.height);
+      if (this.prev) this.hidePrev();
       this.loaded = true; this.pts = null; this.recId = Date.now(); this.savedOnce = false; this.dirty = false;
       this.sec.querySelector(".okRow").style.display = "none"; this.sec.querySelector(".saveAsk").style.display = "none"; updateSave();
       this.sec.querySelector(".placeholder").style.display = "none";
@@ -788,7 +849,7 @@ class View {
       if (this.sample.pts._guess) this.cmpText("見本写真のバイクを検出できず、位置を合わせられませんでした。");
       else if (this.drawSample(this.ctx)) {
         const sm = this.spec.measure({ pts: this.sample.pts, opt: k => k === "fromRear" ? this.opt(k) : false });
-        this.cmpText(`吉田（${this.sample.def ? this.sample.def.label : "見本"}）：` + this.spec.cmp(sm));
+        this.cmpText(`${this.sample.def ? this.sample.def.label : "以前"}：` + this.spec.cmp(sm));
       }
     } else if (!this.opt("overlay")) this.cmpText("");
     this.spec.render(this, this.ctx, g, m);
@@ -1158,6 +1219,75 @@ const SIDE = {
 };
 
 
+
+// ================= 枠に合わせる (crop the photo to a standard frame) =================
+// resolves to a canvas (framed), null (use the photo as is) or undefined (cancel)
+function cropToFrame(img, kind) {
+  return new Promise(resolve => {
+    const OW = kind === "side" ? 1200 : 900, OH = kind === "side" ? 900 : 1200;
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const ov = document.createElement("div"); ov.className = "cropper";
+    ov.innerHTML = `<div class="cbox"><div class="ctitle">📐 写真を枠に合わせる（${kind === "side" ? "真横" : "正面"}）</div>
+      <div class="note chint"></div><canvas></canvas>
+      <div class="row"><button data-a="out">－ 縮小</button><button data-a="in">＋ 拡大</button><button data-a="fit">↺ 元に戻す</button></div>
+      <div class="row"><button data-a="ok" class="primaryBtn">✅ この枠で決定</button><button data-a="raw">そのまま使う</button><button data-a="cancel">キャンセル</button></div></div>`;
+    document.body.appendChild(ov);
+    ov.querySelector(".chint").textContent = kind === "side"
+      ? "指でずらす・2本指で拡大縮小。前後のタイヤを2つの丸に、地面を下の線に合わせてください。"
+      : "指でずらす・2本指で拡大縮小。タイヤの接地面を下の線の中央に、ヘルメットを上の丸に合わせてください。";
+    const cv = ov.querySelector("canvas"), ctx = cv.getContext("2d");
+    const dispW = Math.min(window.innerWidth - 32, kind === "side" ? 640 : 480);
+    cv.width = OW; cv.height = OH; cv.style.width = dispW + "px"; cv.style.height = (dispW * OH / OW) + "px";
+    let s, tx, ty;
+    const fit = () => { s = Math.max(OW / iw, OH / ih); tx = (OW - iw * s) / 2; ty = (OH - ih * s) / 2; };
+    fit();
+    const zoom = (f, cx = OW / 2, cy = OH / 2) => { const ns = Math.max(Math.min(OW / iw, OH / ih) * .3, Math.min(s * f, s * 8)); tx = cx - (cx - tx) * ns / s; ty = cy - (cy - ty) * ns / s; s = ns; draw(); };
+    function guide(c) {
+      c.save(); c.strokeStyle = "rgba(255,255,255,.9)"; c.fillStyle = "rgba(255,255,255,.9)"; c.lineWidth = 4; c.setLineDash([16, 12]);
+      if (kind === "side") {
+        const gy = OH * .86, r = OW * .1;
+        c.beginPath(); c.moveTo(0, gy); c.lineTo(OW, gy); c.stroke();
+        for (const x of [OW * .25, OW * .75]) { c.beginPath(); c.arc(x, gy - r, r, 0, Math.PI * 2); c.stroke(); }
+        c.beginPath(); c.arc(OW * .52, OH * .2, OW * .045, 0, Math.PI * 2); c.stroke();
+        c.strokeRect(OW * .4, OH * .27, OW * .24, OH * .3);
+      } else {
+        const gy = OH * .93;
+        c.beginPath(); c.moveTo(0, gy); c.lineTo(OW, gy); c.stroke();
+        c.beginPath(); c.moveTo(OW / 2, 0); c.lineTo(OW / 2, OH); c.stroke();
+        c.beginPath(); c.arc(OW / 2, OH * .16, OW * .07, 0, Math.PI * 2); c.stroke();
+        c.strokeRect(OW * .32, OH * .24, OW * .36, OH * .3);
+        c.beginPath(); c.ellipse(OW / 2, OH * .74, OW * .17, OH * .19, 0, 0, Math.PI * 2); c.stroke();
+        c.setLineDash([]); c.beginPath(); c.arc(OW / 2, gy, 10, 0, Math.PI * 2); c.fill();
+      }
+      c.restore();
+    }
+    function draw() { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, OW, OH); ctx.drawImage(img, tx, ty, iw * s, ih * s); guide(ctx); }
+    draw();
+    const toOut = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * OW / r.width, y: (e.clientY - r.top) * OH / r.height }; };
+    const ptrs = new Map(); let pinch0 = null;
+    cv.style.touchAction = "none";
+    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, toOut(e)); if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), s }; } });
+    cv.addEventListener("pointermove", e => {
+      if (!ptrs.has(e.pointerId)) return;
+      const prev = ptrs.get(e.pointerId), cur = toOut(e); ptrs.set(e.pointerId, cur);
+      if (ptrs.size === 1) { tx += cur.x - prev.x; ty += cur.y - prev.y; draw(); }
+      else if (ptrs.size === 2 && pinch0) {
+        const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        zoom((pinch0.s * d / pinch0.d) / s, m.x, m.y);
+      }
+    });
+    const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch0 = null; };
+    cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+    cv.addEventListener("wheel", e => { e.preventDefault(); const p = toOut(e); zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, p.x, p.y); }, { passive: false });
+    const close = v => { ov.remove(); resolve(v); };
+    ov.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+      const a = b.dataset.a;
+      if (a === "in") zoom(1.15); else if (a === "out") zoom(1 / 1.15); else if (a === "fit") { fit(); draw(); }
+      else if (a === "raw") close(null); else if (a === "cancel") close(undefined);
+      else if (a === "ok") { const o = document.createElement("canvas"); o.width = OW; o.height = OH; const c = o.getContext("2d"); c.fillStyle = "#000"; c.fillRect(0, 0, OW, OH); c.drawImage(img, tx, ty, iw * s, ih * s); close(o); }
+    }));
+  });
+}
 // ================= 場面さがし (scene finder) =================
 const Finder = (() => {
   const $ = q => document.querySelector(q);

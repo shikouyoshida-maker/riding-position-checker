@@ -360,8 +360,8 @@ function denormPts(o, W, H) {
   const p = {};
   for (const [k, q] of Object.entries(o || {})) {
     if (Array.isArray(q)) p[k] = { x: q[0] * W, y: q[1] * H };
-    else if (k === "_groundY" && q && "y" in q) p[k] = q.y * H;
-    else if (k === "_gripW" && q && "w" in q) p[k] = q.w * W;
+    else if (k === "_groundY" && q && typeof q === "object" && "y" in q) p[k] = q.y * H;
+    else if (k === "_gripW" && q && typeof q === "object" && "w" in q) p[k] = q.w * W;
     else p[k] = q;
   }
   return p;
@@ -448,8 +448,10 @@ const Store = {
     if (this.db || !this.ok) return Promise.resolve(this.db);
     return new Promise(res => {
       try {
-        const r = indexedDB.open("rpc-history", 1);
-        r.onupgradeneeded = () => r.result.createObjectStore("recs", { keyPath: "id" });
+        const r = indexedDB.open("rpc-history", 2);
+        r.onupgradeneeded = () => { const d = r.result;
+          if (!d.objectStoreNames.contains("recs")) d.createObjectStore("recs", { keyPath: "id" });
+          if (!d.objectStoreNames.contains("raws")) d.createObjectStore("raws", { keyPath: "id" }); };
         r.onsuccess = () => { this.db = r.result; res(this.db); };
         r.onerror = () => { this.ok = false; res(null); };
       } catch (e) { this.ok = false; res(null); }
@@ -458,7 +460,14 @@ const Store = {
   async add(rec) {
     const db = await this.open();
     if (!db) { this.mem = this.mem.filter(r => r.id !== rec.id); this.mem.push(rec); return; }
-    await new Promise((res, rej) => { const t = db.transaction("recs", "readwrite"); t.objectStore("recs").put(rec); t.oncomplete = res; t.onerror = rej; });
+    const { raw, ...meta } = rec;        // the big photo lives in its own store (the list never loads it)
+    await new Promise((res, rej) => { const t = db.transaction(["recs", "raws"], "readwrite");
+      t.objectStore("recs").put(meta); if (raw) t.objectStore("raws").put({ id: rec.id, raw }); t.oncomplete = res; t.onerror = rej; });
+  },
+  async raw(rec) {
+    if (rec.raw) return rec.raw;
+    const db = await this.open(); if (!db) return null;
+    return new Promise(res => { const q = db.transaction("raws").objectStore("raws").get(rec.id); q.onsuccess = () => res(q.result ? q.result.raw : null); q.onerror = () => res(null); });
   },
   async list(view) {
     const db = await this.open();
@@ -468,7 +477,7 @@ const Store = {
   async del(id) {
     const db = await this.open();
     if (!db) { this.mem = this.mem.filter(r => r.id !== id); return; }
-    await new Promise(res => { const t = db.transaction("recs", "readwrite"); t.objectStore("recs").delete(id); t.oncomplete = res; t.onerror = res; });
+    await new Promise(res => { const t = db.transaction(["recs", "raws"], "readwrite"); t.objectStore("recs").delete(id); t.objectStore("raws").delete(id); t.oncomplete = res; t.onerror = res; });
   },
 };
 const fmtDate = id => { const d = new Date(id); const p = n => String(n).padStart(2, "0");
@@ -561,7 +570,7 @@ class View {
     rc.width = Math.round(this.work.width * kr); rc.height = Math.round(this.work.height * kr);
     rc.getContext("2d").drawImage(this.work, 0, 0, rc.width, rc.height);
     const raw = rc.toDataURL("image/jpeg", .85), pts = normPts(this.pts, this.work.width, this.work.height);
-    const rec = { id: this.recId, view: this.spec.name, img, raw, pts, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
+    const rec = { id: this.recId, view: this.spec.name, img, raw, pts, opts: { fromRear: this.opt("fromRear") }, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
     try { await Store.add(rec); this.status(Store.db ? `💾 ${fmtDate(rec.id)} の記録としてこのiPhoneに保存しました。` : "💾 一時保存しました（この画面を閉じると消えます）。"); }
     catch (e) { console.warn(e); this.status("⚠️ 保存できませんでした。"); return false; }
     if (this.sec.querySelector(".recList").style.display !== "none") this.renderList();
@@ -632,15 +641,18 @@ class View {
   // ---- 以前の自分の写真を重ねる ----
   async loadPastOverlay() {
     const r = this.prev; if (!r) return;
-    if (!r.raw || !r.pts) { this.sampleState = "none"; this.cmpText("この記録は重ねられません（この機能を入れたあとに保存した記録から重ねられます）。"); this.draw(); return; }
     this.sampleState = "loading"; this.cmpText("以前の写真を準備中…");
+    const raw = r.pts ? await Store.raw(r) : null;
+    if (this.prev !== r || !this.opt("overlay")) return;
+    if (!raw) { this.sampleState = "none"; this.cmpText("この記録は重ねられません（この機能を入れたあとに保存した記録から重ねられます）。"); this.draw(); return; }
     try {
-      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = r.raw; });
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = raw; });
       const c = document.createElement("canvas"); c.width = im.naturalWidth; c.height = im.naturalHeight;
       c.getContext("2d").drawImage(im, 0, 0);
       if (this.prev !== r) return;
-      this.sample = { c, pts: denormPts(r.pts, c.width, c.height), def: { label: "以前 " + fmtDate(r.id) } }; this.sampleState = "ready";
-    } catch (e) { console.warn(e); this.sampleState = "none"; this.cmpText("以前の写真を読み込めませんでした。"); }
+      this.sample = { c, pts: denormPts(r.pts, c.width, c.height), def: { label: "以前 " + fmtDate(r.id), opts: r.opts || null } }; this.sampleState = "ready";
+      if (!this.pts) this.cmpText("");
+    } catch (e) { console.warn(e); this.sampleState = "none"; if (this.prev === r && this.opt("overlay")) this.cmpText("以前の写真を読み込めませんでした。"); }
     this.draw();
   }
   showPrev(r) {
@@ -846,9 +858,11 @@ class View {
     const m = this.spec.measure(this);
     this.last = m;
     if (this.opt("overlay") && this.sampleState === "ready") {
-      if (this.sample.pts._guess) this.cmpText("見本写真のバイクを検出できず、位置を合わせられませんでした。");
+      if (this.pts._guess) this.cmpText("今回の写真のバイクの点を合わせてから重ねてください。");
+      else if (this.sample.pts._guess) this.cmpText("以前の写真のバイクの点が仮の位置のため、重ねる位置を合わせられませんでした。");
       else if (this.drawSample(this.ctx)) {
-        const sm = this.spec.measure({ pts: this.sample.pts, opt: k => k === "fromRear" ? this.opt(k) : false });
+        const so = this.sample.def && this.sample.def.opts;
+        const sm = this.spec.measure({ pts: this.sample.pts, opt: k => k === "fromRear" ? (so ? !!so.fromRear : this.opt(k)) : false });
         this.cmpText(`${this.sample.def ? this.sample.def.label : "以前"}：` + this.spec.cmp(sm));
       }
     } else if (!this.opt("overlay")) this.cmpText("");
@@ -1236,12 +1250,15 @@ function cropToFrame(img, kind) {
       ? "指でずらす・2本指で拡大縮小。前後のタイヤを2つの丸に、地面を下の線に合わせてください。"
       : "指でずらす・2本指で拡大縮小。タイヤの接地面を下の線の中央に、ヘルメットを上の丸に合わせてください。";
     const cv = ov.querySelector("canvas"), ctx = cv.getContext("2d");
-    const dispW = Math.min(window.innerWidth - 32, kind === "side" ? 640 : 480);
+    const dispW = Math.max(200, Math.min(window.innerWidth - 56, (window.innerHeight - 230) * OW / OH, kind === "side" ? 640 : 480));
     cv.width = OW; cv.height = OH; cv.style.width = dispW + "px"; cv.style.height = (dispW * OH / OW) + "px";
-    let s, tx, ty;
-    const fit = () => { s = Math.max(OW / iw, OH / ih); tx = (OW - iw * s) / 2; ty = (OH - ih * s) / 2; };
+    let s, tx, ty, s0, rq = 0;
+    const fit = () => { s0 = s = Math.max(OW / iw, OH / ih); tx = (OW - iw * s) / 2; ty = (OH - ih * s) / 2; };
     fit();
-    const zoom = (f, cx = OW / 2, cy = OH / 2) => { const ns = Math.max(Math.min(OW / iw, OH / ih) * .3, Math.min(s * f, s * 8)); tx = cx - (cx - tx) * ns / s; ty = cy - (cy - ty) * ns / s; s = ns; draw(); };
+    const clampS = v => Math.max(Math.min(OW / iw, OH / ih) * .3, Math.min(v, s0 * 8));
+    const req = () => { if (!rq) rq = requestAnimationFrame(() => { rq = 0; draw(); }); };
+    const zoom = (f, cx = OW / 2, cy = OH / 2) => { const ns = clampS(s * f); tx = cx - (cx - tx) * ns / s; ty = cy - (cy - ty) * ns / s; s = ns; req(); };
+    const prevOv = document.body.style.overflow; document.body.style.overflow = "hidden"; ov.style.overscrollBehavior = "contain";
     function guide(c) {
       c.save(); c.strokeStyle = "rgba(255,255,255,.9)"; c.fillStyle = "rgba(255,255,255,.9)"; c.lineWidth = 4; c.setLineDash([16, 12]);
       if (kind === "side") {
@@ -1266,23 +1283,25 @@ function cropToFrame(img, kind) {
     const toOut = e => { const r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * OW / r.width, y: (e.clientY - r.top) * OH / r.height }; };
     const ptrs = new Map(); let pinch0 = null;
     cv.style.touchAction = "none";
-    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, toOut(e)); if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), s }; } });
+    const startPinch = () => { const [a, b] = [...ptrs.values()]; pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s, tx, ty, m: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }; };
+    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, toOut(e)); if (ptrs.size === 2) startPinch(); });
     cv.addEventListener("pointermove", e => {
       if (!ptrs.has(e.pointerId)) return;
       const prev = ptrs.get(e.pointerId), cur = toOut(e); ptrs.set(e.pointerId, cur);
-      if (ptrs.size === 1) { tx += cur.x - prev.x; ty += cur.y - prev.y; draw(); }
+      if (ptrs.size === 1) { tx += cur.x - prev.x; ty += cur.y - prev.y; req(); }
       else if (ptrs.size === 2 && pinch0) {
         const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y), m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-        zoom((pinch0.s * d / pinch0.d) / s, m.x, m.y);
+        const ns = clampS(pinch0.s * d / pinch0.d);
+        tx = m.x - (pinch0.m.x - pinch0.tx) * ns / pinch0.s; ty = m.y - (pinch0.m.y - pinch0.ty) * ns / pinch0.s; s = ns; req();
       }
     });
-    const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch0 = null; };
+    const up = e => { ptrs.delete(e.pointerId); if (ptrs.size === 2) startPinch(); else if (ptrs.size < 2) pinch0 = null; };
     cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
-    cv.addEventListener("wheel", e => { e.preventDefault(); const p = toOut(e); zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, p.x, p.y); }, { passive: false });
-    const close = v => { ov.remove(); resolve(v); };
+    cv.addEventListener("wheel", e => { e.preventDefault(); if (!e.deltaY) return; const p = toOut(e); zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, p.x, p.y); }, { passive: false });
+    const close = v => { document.body.style.overflow = prevOv; ov.remove(); resolve(v); };
     ov.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
       const a = b.dataset.a;
-      if (a === "in") zoom(1.15); else if (a === "out") zoom(1 / 1.15); else if (a === "fit") { fit(); draw(); }
+      if (a === "in") zoom(1.15); else if (a === "out") zoom(1 / 1.15); else if (a === "fit") { fit(); req(); }
       else if (a === "raw") close(null); else if (a === "cancel") close(undefined);
       else if (a === "ok") { const o = document.createElement("canvas"); o.width = OW; o.height = OH; const c = o.getContext("2d"); c.fillStyle = "#000"; c.fillRect(0, 0, OW, OH); c.drawImage(img, tx, ty, iw * s, ih * s); close(o); }
     }));

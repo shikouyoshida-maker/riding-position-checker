@@ -67,6 +67,9 @@
   .recBar .note { flex:1; min-width:120px; }
   button.danger { background:#4a2228; color:#ffb4b4; }
   .okRow .okBtn { background:var(--ok); color:#0b1a10; font-size:16px; padding:12px 18px; }
+  .sampleChips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .sampleChips button { padding:6px 10px; font-size:12px; border-radius:16px; }
+  .sampleChips button.on { background:var(--sac); color:#1a0b12; }
   .saveAsk { background:#1f3326; border-radius:10px; padding:10px; font-size:14px; line-height:1.6; margin-top:8px; }
   button.primaryBtn { background:var(--ok); color:#0b1a10; }
   .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
@@ -138,7 +141,8 @@
       <label class="chk"><input type="checkbox" class="useHorizon"> 水平線で傾き補正（緑の線を地面に合わせる）</label>
       <label class="chk"><input type="checkbox" class="fromRear"> 真後ろから撮った写真</label>
       <div class="cmp">
-        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田さんの見本を透かして重ねる</label>
+        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田のフォームと重ねる</label>
+        <div class="sampleChips" style="display:none"></div>
         <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
         <div class="note cmpText"></div>
       </div>
@@ -184,7 +188,8 @@
         <span class="k">三角の頂点角（頭）</span><span data-r="apex">—</span>
       </div>
       <div class="cmp">
-        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田さんの見本を透かして重ねる</label>
+        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田のフォームと重ねる</label>
+        <div class="sampleChips" style="display:none"></div>
         <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
         <div class="note cmpText"></div>
       </div>
@@ -342,6 +347,11 @@ function loadModels(ms = 120000) {
   return Promise.race([startLoad(), to]).catch(() => null);
 }
 
+let SAMPLES_P = null;
+function getSamples() {
+  if (!SAMPLES_P) SAMPLES_P = fetch("samples/samples.json", { cache: "no-cache" }).then(r => r.ok ? r.json() : []).catch(() => []);
+  return SAMPLES_P;
+}
 function runPose(m, canvas) {
   const r = m.pose.detect(canvas);
   const lm = r.landmarks && r.landmarks[0];
@@ -469,10 +479,11 @@ class View {
         this.draw(); this.markDirty(); return;
       }
       this.draw(); if (!c.classList.contains("overlay")) this.markDirty(); }));
-    this.sample = null; this.sampleState = "none";
+    this.sample = null; this.sampleState = "none"; this.sampleCache = {}; this.sampleId = null; this.samplePicked = false;
     this.sec.querySelector(".overlay").addEventListener("change", e => {
       this.sec.querySelector(".oprow").style.display = e.target.checked ? "flex" : "none";
-      if (e.target.checked) this.loadSample();
+      this.sec.querySelector(".sampleChips").style.display = e.target.checked ? "flex" : "none";
+      if (e.target.checked) this.initSamples(); else this.draw();
     });
     this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
     this.prev = null;
@@ -620,18 +631,40 @@ class View {
     }
     el.innerHTML = h;
   }
-  // ---- 見本（吉田さんの写真）: sample-front.jpg / sample-side.jpg を同じフォルダに置く ----
-  async loadSample() {
-    if (this.sampleState === "ready" || this.sampleState === "loading") return;
-    this.sampleState = "loading"; this.cmpText("見本を準備中…");
+  // ---- 吉田のフォーム（見本）: samples/samples.json に一覧、画像は samples/ に置く ----
+  async initSamples() {
+    const list = (await getSamples()).filter(x => x.view === this.spec.name);
+    const box = this.sec.querySelector(".sampleChips"); box.innerHTML = "";
+    if (!list.length) { this.cmpText("吉田のフォームはまだ準備中です。"); return; }
+    for (const x of list) {
+      const b = document.createElement("button"); b.textContent = x.label; b.dataset.id = x.id;
+      b.onclick = () => { this.samplePicked = true; this.loadSample(x.id); };
+      box.appendChild(b);
+    }
+    let pick = list.find(x => x.id === this.sampleId);
+    if (!pick || !this.samplePicked) {
+      if (this.spec.name === "front" && this.pts) {
+        const want = leanOf(this.pts.bikeB, this.pts.bikeT) > 0 ? "left" : "right";   // + = rider's left corner
+        pick = list.find(x => x.cat === want) || list[0];
+      } else pick = list.find(x => x.cat === "acc") || list[0];
+    }
+    this.loadSample(pick.id);
+  }
+  async loadSample(id) {
+    const def = (await getSamples()).find(x => x.id === id); if (!def) return;
+    this.sampleId = id;
+    this.sec.querySelectorAll(".sampleChips button").forEach(b => b.classList.toggle("on", b.dataset.id === id));
+    if (this.sampleCache[id]) { this.sample = this.sampleCache[id]; this.sampleState = "ready"; this.draw(); return; }
+    this.sampleState = "loading"; this.cmpText("吉田のフォームを準備中…");
     try {
-      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = this.spec.sampleSrc; });
+      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = def.file; });
       const c = document.createElement("canvas");
       const k = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
       c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
       c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
-      let pts = this.spec.samplePts ? this.spec.samplePts(c.width, c.height) : null;
-      if (!pts) {
+      let pts = null;
+      if (def.pts) { pts = {}; for (const [kk, q] of Object.entries(def.pts)) pts[kk] = (q && typeof q === "object") ? { x: q[0] * c.width, y: q[1] * c.height } : q; }
+      else {
         const m = await loadModels();
         if (!m) throw new Error("model");
         let pose = null, seg = null;
@@ -639,14 +672,14 @@ class View {
         try { seg = runSeg(m, c); } catch (e) {}
         pts = this.spec.auto(c.width, c.height, pose, seg, m, []);
       }
-      this.sample = { c, pts }; this.sampleState = "ready";
+      this.sample = this.sampleCache[id] = { c, pts, def }; this.sampleState = "ready";
     } catch (e) {
       console.warn(e); this.sampleState = "none";
-      this.cmpText(e && e.message === "model" ? "AIモデルを読み込めず、見本の位置を合わせられませんでした。電波の良い所でもう一度チェックしてください。"
-                                              : "見本写真がまだ入っていないか、読み込めませんでした。");
+      this.cmpText(e && e.message === "model" ? "AIモデルを読み込めず、見本の位置を合わせられませんでした。電波の良い所でもう一度試してください。"
+                                              : "吉田のフォームを読み込めませんでした。");
       return;
     }
-    this.draw();
+    if (this.sampleId === id) this.draw();
   }
   drawSample(ctx) {
     const s = this.sample, [a0, a1] = this.spec.anchors;
@@ -767,7 +800,7 @@ class View {
       if (this.sample.pts._guess) this.cmpText("見本写真のバイクを検出できず、位置を合わせられませんでした。");
       else if (this.drawSample(this.ctx)) {
         const sm = this.spec.measure({ pts: this.sample.pts, opt: k => k === "fromRear" ? this.opt(k) : false });
-        this.cmpText("見本：" + this.spec.cmp(sm));
+        this.cmpText(`吉田（${this.sample.def ? this.sample.def.label : "見本"}）：` + this.spec.cmp(sm));
       }
     } else if (!this.opt("overlay")) this.cmpText("");
     this.spec.render(this, this.ctx, g, m);

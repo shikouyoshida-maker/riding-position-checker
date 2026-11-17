@@ -63,6 +63,11 @@
   .rec { cursor:pointer; }
   .rec.sel { outline:2px solid var(--ng); }
   .rec .ck { font-size:22px; width:26px; text-align:center; }
+  .turnTabs { display:flex; gap:6px; }
+  .turnTabs button { flex:1; padding:8px 4px; font-size:14px; }
+  .turnTabs button.on, .turnRow button.on { background:var(--bike); color:#111; font-weight:800; }
+  .turnRow { align-items:center; flex-wrap:wrap; }
+  .rec .tt { margin-left:8px; font-size:12px; background:#3a4152; border-radius:6px; padding:1px 6px; }
   .recBar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; position:sticky; top:0; background:var(--panel); padding:2px 0 6px; z-index:1; }
   .recBar .note { flex:1; min-width:120px; }
   button.danger { background:#4a2228; color:#ffb4b4; }
@@ -187,13 +192,14 @@
       <ol>
         <li>角度が決まったら、写真のすぐ下の<b>✅ 角度OK（保存へ）</b>を押します。</li>
         <li>「保存しますか？」で<b>💾 保存する</b>を押したときだけ保存されます。</li>
+        <li>正面の写真は、AIが<b>右旋回・左旋回</b>を自動で選んで保存します。違っていたら保存の前に押して直せます。</li>
       </ol>
       <img class="shot" src="guide/step6-save.jpg" loading="lazy" alt="角度OK → 保存する"><div class="cap">角度OK → 保存する</div>
       <div class="tip">記録は<b>あなたのスマホの中だけ</b>に保存されます。写真がどこかに送られることはありません。</div>
 
       <h4>⑥ 以前の自分と比べる</h4>
       <ol>
-        <li><b>📂 以前と比べる</b>を押して、比べたい記録を選びます。数値の変化が出ます。</li>
+        <li><b>📂 以前と比べる</b>を押して、比べたい記録を選びます。数値の変化が出ます。正面は<b>「右旋回」「左旋回」「すべて」</b>のタブで切り替えられます（最初は今の写真と同じ向き）。</li>
         <li><b>🔁 今回の写真に透かして重ねる</b>をオンにすると、以前の写真がバイクの位置に合わせて重なります。スライダーで濃さを変えられます。</li>
         <li>いらない記録は「☑ 選択して削除」「🗑 すべて削除」で消せます。</li>
       </ol>
@@ -704,10 +710,31 @@ class View {
     this.sec.querySelector(".okBtn").textContent = this.savedOnce ? "✅ 角度OK（変更を保存へ）" : "✅ 角度OK（保存へ）";
     this.sec.querySelector(".saveAsk").style.display = "none";
   }
+  curTurn() {
+    if (!this.spec.turn) return null;
+    if (this.turnSet) return this.turn;
+    return this.last ? this.spec.turn(this.last, this.opt("fromRear")) : null;
+  }
   askSave() {
     const box = this.sec.querySelector(".saveAsk"); box.style.display = "block"; box.innerHTML = "";
     const t = document.createElement("div");
     t.textContent = this.savedOnce ? "変更を保存しますか？（前に保存した記録を上書きします）" : "この写真と角度を保存しますか？";
+    box.append(t);
+    if (this.spec.turn) {   // 右旋回・左旋回（AIの自動判定。違っていたら押して直す）
+      const tr = document.createElement("div"); tr.className = "row turnRow";
+      const lab = document.createElement("span"); lab.className = "note"; lab.textContent = "コーナー：";
+      tr.appendChild(lab);
+      const opts = [["R", "↪ 右旋回"], ["L", "↩ 左旋回"], [null, "直線・なし"]];
+      const paint = () => tr.querySelectorAll("button").forEach((b, i) => b.classList.toggle("on", opts[i][0] === this.curTurn()));
+      for (const [k, txt] of opts) {
+        const b = document.createElement("button"); b.textContent = txt;
+        b.addEventListener("click", () => { this.turn = k; this.turnSet = true; paint(); });
+        tr.appendChild(b);
+      }
+      const auto = document.createElement("div"); auto.className = "note";
+      auto.textContent = this.turnSet ? "" : "AIがバイクの傾きから自動で選んでいます。違っていたら押して直してください。";
+      box.append(tr, auto); paint();
+    }
     const row = document.createElement("div"); row.className = "row";
     const yes = document.createElement("button"); yes.className = "primaryBtn"; yes.textContent = "💾 保存する";
     const no = document.createElement("button"); no.textContent = "保存しない";
@@ -722,7 +749,7 @@ class View {
       else this.markDirty();
     });
     no.addEventListener("click", () => { box.style.display = "none"; this.status("保存しませんでした。点を直してから、もう一度「✅ 角度OK」を押せます。"); });
-    row.append(yes, no); box.append(t, row);
+    row.append(yes, no); box.append(row);
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
   async record() {
@@ -737,7 +764,7 @@ class View {
     rc.width = Math.round(this.work.width * kr); rc.height = Math.round(this.work.height * kr);
     rc.getContext("2d").drawImage(this.work, 0, 0, rc.width, rc.height);
     const raw = rc.toDataURL("image/jpeg", .85), pts = normPts(this.pts, this.work.width, this.work.height);
-    const rec = { id: this.recId, view: this.spec.name, img, raw, pts, opts: { fromRear: this.opt("fromRear") }, verdict: this.last.verdict, nums: this.spec.nums(this.last) };
+    const rec = { id: this.recId, view: this.spec.name, img, raw, pts, opts: { fromRear: this.opt("fromRear") }, verdict: this.last.verdict, nums: this.spec.nums(this.last), turn: this.curTurn() };
     try { await Store.add(rec); this.status(Store.db ? `💾 ${fmtDate(rec.id)} の記録としてこのiPhoneに保存しました。` : "💾 一時保存しました（この画面を閉じると消えます）。"); }
     catch (e) { console.warn(e); this.status("⚠️ 保存できませんでした。"); return false; }
     if (this.sec.querySelector(".recList").style.display !== "none") this.renderList();
@@ -745,13 +772,27 @@ class View {
   }
   async toggleList() {
     const el = this.sec.querySelector(".recList");
-    if (el.style.display === "none") { el.style.display = "flex"; await this.renderList(); }
+    if (el.style.display === "none") { el.style.display = "flex"; this.listTurn = this.curTurn() || "all"; this.selMode = false; await this.renderList(); }
     else el.style.display = "none";
   }
   async renderList() {
     const el = this.sec.querySelector(".recList"); el.innerHTML = "";
-    const recs = (await Store.list(this.spec.name)).filter(r => r.id !== this.recId);
-    if (!recs.length) { this.selMode = false; el.innerHTML = '<div class="note">まだ以前の記録がありません。「✅ 角度OK」→「保存する」で保存した結果が、ここに並びます。</div>'; return; }
+    const all = (await Store.list(this.spec.name)).filter(r => r.id !== this.recId);
+    if (!all.length) { this.selMode = false; el.innerHTML = '<div class="note">まだ以前の記録がありません。「✅ 角度OK」→「保存する」で保存した結果が、ここに並びます。</div>'; return; }
+    let recs = all;
+    if (this.spec.turn) {   // 右旋回・左旋回・すべて のタブ
+      const lt = this.listTurn || "all";
+      recs = lt === "all" ? all : all.filter(r => r.turn === lt);
+      const tabs = document.createElement("div"); tabs.className = "turnTabs";
+      for (const [k, txt] of [["R", "↪ 右旋回"], ["L", "↩ 左旋回"], ["all", "すべて"]]) {
+        const n = k === "all" ? all.length : all.filter(r => r.turn === k).length;
+        const b = document.createElement("button"); b.textContent = `${txt}（${n}）`; if (k === lt) b.className = "on";
+        b.addEventListener("click", () => { this.listTurn = k; this.selMode = false; if (this.sel) this.sel.clear(); this.renderList(); });
+        tabs.appendChild(b);
+      }
+      el.appendChild(tabs);
+      if (!recs.length) { const n = document.createElement("div"); n.className = "note"; n.textContent = (lt === "R" ? "右旋回" : "左旋回") + "の記録はまだありません。"; el.appendChild(n); return; }
+    }
     if (!this.sel) this.sel = new Set();
     for (const id of [...this.sel]) if (!recs.some(r => r.id === id)) this.sel.delete(id);
     // toolbar
@@ -760,7 +801,7 @@ class View {
     if (!this.selMode) {
       const hint = document.createElement("span"); hint.className = "note"; hint.textContent = "見たい記録をタップ"; bar.appendChild(hint);
       mk("☑ 選択して削除", "", () => { this.selMode = true; this.sel.clear(); this.renderList(); });
-      mk("🗑 すべて削除", "danger", () => this.askDelete(recs.map(r => r.id), `以前の記録 ${recs.length}件をすべて削除します。よろしいですか？`));
+      mk(recs.length < all.length ? "🗑 この一覧を削除" : "🗑 すべて削除", "danger", () => this.askDelete(recs.map(r => r.id), `${recs.length < all.length ? "この一覧の" : "以前の"}記録 ${recs.length}件をすべて削除します。よろしいですか？`));
     } else {
       mk(this.sel.size === recs.length ? "選択を外す" : "すべて選ぶ", "", () => {
         if (this.sel.size === recs.length) this.sel.clear(); else recs.forEach(r => this.sel.add(r.id));
@@ -776,7 +817,7 @@ class View {
       const row = document.createElement("div"); row.className = "rec" + (this.selMode && this.sel.has(r.id) ? " sel" : "");
       if (this.selMode) { const ck = document.createElement("span"); ck.className = "ck"; ck.textContent = this.sel.has(r.id) ? "☑" : "☐"; row.appendChild(ck); }
       const im = document.createElement("img"); im.src = r.img;
-      const b = document.createElement("div"); b.className = "rt"; b.innerHTML = `${fmtDate(r.id)}<br><span class="note"></span>`;
+      const b = document.createElement("div"); b.className = "rt"; b.innerHTML = `${fmtDate(r.id)}${this.spec.turn ? `<span class="tt">${r.turn === "R" ? "↪ 右旋回" : r.turn === "L" ? "↩ 左旋回" : "向きなし"}</span>` : ""}<br><span class="note"></span>`;
       b.querySelector(".note").textContent = r.verdict;
       row.append(im, b);
       row.addEventListener("click", () => {
@@ -945,7 +986,7 @@ class View {
       this.work.height = this.cv.height = Math.round(sh * k);
       this.wctx.drawImage(src, 0, 0, this.work.width, this.work.height);
       if (this.prev) this.hidePrev();
-      this.loaded = true; this.pts = null; this.recId = Date.now(); this.savedOnce = false; this.dirty = false;
+      this.loaded = true; this.pts = null; this.recId = Date.now(); this.savedOnce = false; this.dirty = false; this.turnSet = false; this.turn = null;
       this.sec.querySelector(".okRow").style.display = "none"; this.sec.querySelector(".saveAsk").style.display = "none"; updateSave();
       this.sec.querySelector(".placeholder").style.display = "none";
       this.cv.style.display = "block";
@@ -1097,6 +1138,8 @@ function bikeAxisFromMask(seg, idx) {
 
 const FRONT = {
   name: "front",
+  // 右旋回／左旋回（ライダーから見た向き）。ほぼ直立なら null
+  turn: (m, rear) => !m || Math.abs(m.bike) < 3 ? null : ((m.bike > 0) === !!rear ? "R" : "L"),
   nums: m => ({ "鼻頭のずれ（グリップ何個分・＋内側）": [m.d, "個"], "バンク角": [Math.abs(m.bike), "°"],
                 "上半身の角度": [Math.abs(m.body), "°"], "上半身とバイクの差（＋内側）": [m.diffIn, "°"] }),
   sampleSrc: "sample-front.jpg", anchors: ["bikeB", "bikeT"], mirrorCheck: "lean",

@@ -214,7 +214,7 @@
       <label class="btn primary" for="f-find">📂 選ぶ</label>
       <input id="f-find" type="file" accept="video/*,image/*" multiple>
     </div>
-    <div class="note">走っている動画や写真を選ぶと、AIが<b>正面（左右コーナー・加速・減速・直線）</b>と<b>真横（加速・減速）</b>の場面を探して分けます。ファイルはこの端末の外には送られません。似た場面が続くときは、いちばんよく写った1枚だけを残します。</div>
+    <div class="note">走っている動画や写真を選ぶと、AIが<b>正面（左コーナー・右コーナー・直線）</b>と<b>真横（加速・減速・一定）</b>の場面を探して分けます。ファイルはこの端末の外には送られません。似た場面が続くときは、いちばんよく写った1枚だけを残します。</div>
     <div class="row">
       <label class="chk" style="margin:0">動画は <select id="findStep"><option value="0.5">0.5秒</option><option value="1" selected>1秒</option><option value="2">2秒</option></select> ごとに調べる</label>
     </div>
@@ -226,7 +226,7 @@
       <button id="findAll">すべて選ぶ</button>
       <button id="findSave" class="primaryBtn">💾 選んだ画像を保存（0枚）</button>
     </div>
-    <div class="note findHint" style="display:none">タップで選択／解除。iPhoneでは保存ボタンのあと「画像を保存」を選ぶと写真アプリに入ります。<br>※ 加速・減速は、動画の速さの変化（「動き」）か、仙骨の向き（「姿勢から推定」）で判定しています。姿勢からの推定は外れることがあります。真横の写真ではコーナーの左右は判定しません。</div>
+    <div class="note findHint" style="display:none">タップで選択／解除。iPhoneでは保存ボタンを押して画像ができたら、もう一度押して「画像を保存」を選ぶと写真アプリに入ります。<br>※ 加速・減速は、カメラを止めて撮った真横の動画では速さの変化（「動き」）で、それ以外は仙骨の向き（「姿勢から推定」）で判定します。姿勢からの推定は外れることがあります。正面から撮った写真・動画では加速・減速は判定しません。後ろから撮った場面は対象外です。</div>
   </section>
 
   <h3 class="sec">📺 姿勢の解説動画</h3>
@@ -1140,10 +1140,12 @@ const SIDE = {
 // ================= 場面さがし (scene finder) =================
 const Finder = (() => {
   const $ = q => document.querySelector(q);
-  const CATS = ["正面・左コーナー", "正面・右コーナー", "正面・加速", "正面・減速", "正面・直線", "横・加速", "横・減速", "横・一定"];
-  let results = [], filter = "すべて", stop = false, busy = false;
+  const CATS = ["正面・左コーナー", "正面・右コーナー", "正面・直線", "横・加速", "横・減速", "横・一定", "横・加速（姿勢から推定）", "横・減速（姿勢から推定）"];
+  const LEAN_MIN = 10;   // degrees; camera roll is not compensated, so keep a margin
+  let results = [], filter = "すべて", stop = false, busy = false, ready = null;
   const work = document.createElement("canvas");
   const prog = (p, msg) => { $(".findProg").style.display = "block"; $(".findProg i").style.width = `${Math.round(p * 100)}%`; if (msg != null) $(".findMsg").textContent = msg; };
+  const isImage = f => (f.type || "").startsWith("image/") || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(f.name);
 
   function bikeBox(seg, idx) {
     const { mask, w, h } = seg; let x0 = w, x1 = -1, y0 = h, y1 = -1, n = 0;
@@ -1152,142 +1154,173 @@ const Finder = (() => {
     if (n < (w / st) * (h / st) * .004) return null;
     return { x0: x0 * seg.sx, x1: (x1 + 1) * seg.sx, y0: y0 * seg.sy, y1: (y1 + 1) * seg.sy, frac: n / ((w / st) * (h / st)) };
   }
-  function sharpness(cv, b) {   // gradient energy inside the bike box on a small copy
-    const t = document.createElement("canvas"), W = 160, H = Math.max(20, Math.round(160 * (b.y1 - b.y0) / Math.max(1, b.x1 - b.x0)));
-    t.width = W; t.height = Math.min(H, 240);
-    const c = t.getContext("2d"); c.drawImage(cv, b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 0, 0, t.width, t.height);
-    const d = c.getImageData(0, 0, t.width, t.height).data; let e = 0, n = 0;
-    for (let y = 1; y < t.height; y++) for (let x = 1; x < t.width; x++) {
-      const i = (y * t.width + x) * 4, g = d[i] + d[i + 1] + d[i + 2], gl = d[i - 4] + d[i - 3] + d[i - 2], gu = d[i - t.width * 4] + d[i - t.width * 4 + 1] + d[i - t.width * 4 + 2];
-      e += Math.abs(g - gl) + Math.abs(g - gu); n++; }
+  function sharpness(cv, b) {
+    const t = document.createElement("canvas"), bw = Math.max(1, b.x1 - b.x0), bh = Math.max(1, b.y1 - b.y0);
+    t.width = 160; t.height = Math.max(20, Math.min(240, Math.round(160 * bh / bw)));
+    const c = t.getContext("2d"); c.drawImage(cv, b.x0, b.y0, bw, bh, 0, 0, t.width, t.height);
+    const d = c.getImageData(0, 0, t.width, t.height).data, W = t.width; let e = 0, n = 0;
+    for (let y = 1; y < t.height; y++) for (let x = 1; x < W; x++) {
+      const i = (y * W + x) * 4, g = d[i] + d[i + 1] + d[i + 2];
+      e += Math.abs(g - (d[i - 4] + d[i - 3] + d[i - 2])) + Math.abs(g - (d[i - W * 4] + d[i - W * 4 + 1] + d[i - W * 4 + 2])); n++; }
     return n ? e / n / 765 : 0;
   }
-  // analyse one frame already drawn in `work`
   function analyse(m) {
     const W = work.width, H = work.height;
-    let P = null, seg = null;
-    try { P = runPose(m, work); } catch (e) {}
-    if (!P) return null;
-    try { seg = runSeg(m, work); } catch (e) { return null; }
+    const P = runPose(m, work); if (!P) return null;
+    const seg = runSeg(m, work);
     const b = bikeBox(seg, m.bikeIdx); if (!b) return null;
-    const hip = mid(P(23), P(24)), sh = mid(P(11), P(12));
-    const bw = b.x1 - b.x0, bh = b.y1 - b.y0;
-    // rider must be on the bike
-    if (hip.x < b.x0 - bw * .3 || hip.x > b.x1 + bw * .3 || hip.y < b.y0 - bh * .6 || hip.y > b.y1) return null;
+    const hip = mid(P(23), P(24)), sh = mid(P(11), P(12)), bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+    if (hip.x < b.x0 - bw * .3 || hip.x > b.x1 + bw * .3 || hip.y < b.y0 - bh * .6 || hip.y > b.y1) return null;   // rider on the bike
     const torso = dist(hip, sh) || 1, swr = dist(P(11), P(12)) / torso, asp = bw / bh;
     let view = null;
     if (asp > 1.3 || (asp > 1.0 && swr < .35)) view = "side";
-    else if (swr >= .4 && asp < 1.4) view = P(0).v > .6 && (P(2).v > .5 || P(5).v > .5) ? "front" : "rear";
+    else if (swr >= .4 && asp < 1.4) {
+      const facing = P(11).x > P(12).x;        // rider's own left shoulder on image right => facing the camera
+      view = facing && P(0).v > .5 ? "front" : "rear";
+    }
     if (!view || view === "rear") return null;
     const vis = [0, 11, 12, 23, 24].reduce((t, i) => t + (P(i).v || 0), 0) / 5;
     const score = Math.min(1, b.frac * 6) * .4 + vis * .3 + Math.min(1, sharpness(work, b) * 8) * .3;
     const out = { view, box: b, score, t: 0 };
     if (view === "front") {
-      const p = FRONT.auto(W, H, P, seg, m, [], () => false);
+      const notes = [], p = FRONT.auto(W, H, P, seg, m, notes, () => false);
       if (p._guess) return null;
       const fm = FRONT.measure({ pts: p, opt: () => false });
-      out.lean = fm.bike;            // + = top leans to image right = rider's LEFT (rider faces the camera)
+      if (notes.some(n => n.includes("車体全体の傾き")) && Math.abs(fm.bike) >= LEAN_MIN) return null;   // unreliable axis → no fake corner
+      out.lean = fm.bike;                       // + = top leans to image right = rider's LEFT corner
     } else {
       const p = SIDE.auto(W, H, P, seg, m, []);
       if (!p._wheelsOk) return null;
       const sm = SIDE.measure({ pts: p, opt: () => false });
-      out.sac = p._backGuess ? null : sm.sacKey; out.dir = Math.sign(p.front.x - p.rear.x) || 1;
-      out.wb = dist(p.front, p.rear);
+      out.sac = p._backGuess ? null : sm.sacKey; out.wb = dist(p.front, p.rear);
     }
     return out;
   }
-  // label from lean / motion / posture
   function label(f) {
     if (f.view === "front") {
-      if (Math.abs(f.lean) >= 8) return { cat: f.lean > 0 ? "正面・左コーナー" : "正面・右コーナー", basis: `バンク ${Math.abs(f.lean).toFixed(0)}°` };
-      if (f.acc === "acc") return { cat: "正面・加速", basis: "動き" };
-      if (f.acc === "dec") return { cat: "正面・減速", basis: "動き" };
+      if (Math.abs(f.lean) >= LEAN_MIN) return { cat: f.lean > 0 ? "正面・左コーナー" : "正面・右コーナー", basis: `バンク ${Math.abs(f.lean).toFixed(0)}°` };
       return { cat: "正面・直線", basis: "" };
     }
     if (f.acc === "acc") return { cat: "横・加速", basis: "動き" };
     if (f.acc === "dec") return { cat: "横・減速", basis: "動き" };
-    if (f.sac === "rear") return { cat: "横・加速", basis: "姿勢から推定" };
-    if (f.sac === "front") return { cat: "横・減速", basis: "姿勢から推定" };
-    return { cat: "横・一定", basis: f.acc === "const" ? "動き" : "" };
+    if (f.acc === "const") return { cat: "横・一定", basis: "動き" };
+    if (f.sac === "rear") return { cat: "横・加速（姿勢から推定）", basis: "仙骨の向き" };
+    if (f.sac === "front") return { cat: "横・減速（姿勢から推定）", basis: "仙骨の向き" };
+    return { cat: "横・一定", basis: "" };
   }
-  // motion: speed from consecutive samples (side: bike lengths/s along travel; front: v ∝ d(ln h)/dt / h)
-  function motion(list) {
+  // side view only: speed in wheelbases/s from the bike box centre; needs a fixed camera
+  function motion(list, W, H) {
+    const edge = f => f.box.x0 <= 2 || f.box.x1 >= W - 2;
     const v = list.map((f, i) => {
-      const g = list[i - 1]; if (!g || g.view !== f.view || f.t - g.t > 3) return null;
-      const dt = f.t - g.t; if (dt <= 0) return null;
-      if (f.view === "side") { const cx = (f.box.x0 + f.box.x1) / 2, gx = (g.box.x0 + g.box.x1) / 2; return ((cx - gx) * f.dir) / dt / Math.max(1, f.wb); }
-      const h = f.box.y1 - f.box.y0, hg = g.box.y1 - g.box.y0; if (h <= 0 || hg <= 0) return null;
-      const gr = Math.log(h / hg) / dt; return gr > 0 ? gr / h * 1000 : null;
+      const g = list[i - 1]; if (!g || f.view !== "side" || g.view !== "side" || f.t - g.t > 3) return null;
+      const dt = f.t - g.t; if (dt <= 0 || edge(f) || edge(g)) return null;
+      return { t: (f.t + g.t) / 2, s: ((f.box.x0 + f.box.x1) / 2 - (g.box.x0 + g.box.x1) / 2) / dt / Math.max(1, (f.wb + g.wb) / 2) };
     });
     list.forEach((f, i) => {
-      const a = v[i - 1], b = v[i + 1];
-      if (a == null || b == null) return;
-      const dt = (list[i + 1].t - list[i - 1].t) || 1, mean = (Math.abs(a) + Math.abs(b)) / 2 || 1e-6;
-      const rel = (b - a) / dt / mean;                // relative change of speed per second
-      if (f.view === "side" && Math.abs(a) < .05 && Math.abs(b) < .05) return;   // panning camera: no usable motion
+      const a = v[i], b = v[i + 1]; if (!a || !b) return;
+      if (Math.sign(a.s) !== Math.sign(b.s) || Math.min(Math.abs(a.s), Math.abs(b.s)) < .5) return;   // panning / standing still
+      const sa = Math.abs(a.s), sb = Math.abs(b.s), rel = (sb - sa) / (b.t - a.t) / ((sa + sb) / 2);
       f.acc = rel > .15 ? "acc" : rel < -.15 ? "dec" : "const";
     });
   }
-  async function frameBlob(src, t) {   // full-resolution JPEG of the chosen frame (max 1920px)
-    const c = document.createElement("canvas");
-    if (src.kind === "image") { const k = Math.min(1, 1920 / Math.max(src.img.naturalWidth, src.img.naturalHeight));
-      c.width = Math.round(src.img.naturalWidth * k); c.height = Math.round(src.img.naturalHeight * k); c.getContext("2d").drawImage(src.img, 0, 0, c.width, c.height); }
-    else { await seek(src.video, t); const k = Math.min(1, 1920 / Math.max(src.video.videoWidth, src.video.videoHeight));
-      c.width = Math.round(src.video.videoWidth * k); c.height = Math.round(src.video.videoHeight * k); c.getContext("2d").drawImage(src.video, 0, 0, c.width, c.height); }
-    return new Promise(r => c.toBlob(r, "image/jpeg", .92));
+  function seek(v, t, ms = 4000) {
+    return new Promise((res, rej) => {
+      const target = Math.min(Math.max(0, t), Math.max(0, v.duration - .15));
+      let to; const done = () => { clearTimeout(to); v.removeEventListener("seeked", done);
+        if (v.requestVideoFrameCallback) { let ok = false; v.requestVideoFrameCallback(() => { ok = true; res(); }); setTimeout(() => ok || res(), 120); }
+        else setTimeout(res, 40); };
+      v.addEventListener("seeked", done);
+      to = setTimeout(() => { v.removeEventListener("seeked", done); rej(new Error("seek timeout")); }, ms);
+      if (Math.abs(v.currentTime - target) < 1e-3 && v.readyState >= 2) { done(); return; }
+      v.currentTime = target;
+    });
   }
-  function seek(v, t) { return new Promise(res => { const done = () => { v.removeEventListener("seeked", done); setTimeout(res, 20); }; v.addEventListener("seeked", done); v.currentTime = Math.min(t, Math.max(0, v.duration - .05)); }); }
+  async function fixDuration(v) {
+    if (isFinite(v.duration) && v.duration > 0) return v.duration;
+    await new Promise(r => { const h = () => { if (isFinite(v.duration)) { v.removeEventListener("durationchange", h); r(); } };
+      v.addEventListener("durationchange", h); try { v.currentTime = 1e7; } catch (e) {} setTimeout(r, 3000); });
+    try { v.currentTime = 0; } catch (e) {}
+    return isFinite(v.duration) ? v.duration : 0;
+  }
+  async function openVideo(file) {
+    const url = URL.createObjectURL(file), v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.preload = "auto"; v.setAttribute("playsinline", ""); v.src = url;
+    await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("この動画は読み込めません")); setTimeout(res, 8000); });
+    const dur = await fixDuration(v);
+    if (!dur || !v.videoWidth) { closeVideo(v, url); throw new Error("この動画は読み込めません"); }
+    return { v, url, dur };
+  }
+  function closeVideo(v, url) { try { v.removeAttribute("src"); v.load(); } catch (e) {} URL.revokeObjectURL(url); }
+  async function openImage(file) {
+    const url = URL.createObjectURL(file);
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("この写真は読み込めません")); i.src = url; });
+    return { img, url };
+  }
   function drawWork(el, w, h) { const k = Math.min(1, 960 / Math.max(w, h)); work.width = Math.round(w * k); work.height = Math.round(h * k); work.getContext("2d").drawImage(el, 0, 0, work.width, work.height); }
-  function thumb() { const c = document.createElement("canvas"), k = 320 / Math.max(work.width, work.height); c.width = Math.round(work.width * k); c.height = Math.round(work.height * k); c.getContext("2d").drawImage(work, 0, 0, c.width, c.height); return c.toDataURL("image/jpeg", .75); }
+  function thumb() { const c = document.createElement("canvas"), k = 220 / Math.max(work.width, work.height); c.width = Math.round(work.width * k); c.height = Math.round(work.height * k); c.getContext("2d").drawImage(work, 0, 0, c.width, c.height); return c.toDataURL("image/jpeg", .7); }
+  async function frameBlob(r) {     // full-resolution JPEG (max 1920px), re-opened from the original file
+    const c = document.createElement("canvas"), put = (el, w, h) => { const k = Math.min(1, 1920 / Math.max(w, h)); c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext("2d").drawImage(el, 0, 0, c.width, c.height); };
+    if (r.t == null) { const { img, url } = await openImage(r.file); put(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(url); }
+    else { const { v, url } = await openVideo(r.file); try { await seek(v, r.t, 8000); put(v, v.videoWidth, v.videoHeight); } finally { closeVideo(v, url); } }
+    const blob = await new Promise(res => c.toBlob(res, "image/jpeg", .92));
+    if (!blob) throw new Error("画像を作れませんでした");
+    return blob;
+  }
   const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+  const pause = ms => new Promise(r => setTimeout(r, ms));
 
   async function run(files) {
-    if (busy) return; busy = true; stop = false; results = []; render();
-    $("#findStop").style.display = "inline-block"; $(".findSaveRow").style.display = "none";
+    if (busy) return; busy = true; stop = false; results = []; filter = "すべて"; ready = null; render();
+    $("#findStop").style.display = "inline-block";
+    let lock = null; try { lock = await navigator.wakeLock?.request("screen"); } catch (e) {}
     prog(0, "AIを準備中…");
     const m = await loadModels();
-    if (!m) { prog(0, `⚠️ AIモデルを読み込めませんでした。［理由：${loadErr || "不明"}］`); busy = false; $("#findStop").style.display = "none"; return; }
+    if (!m || stop) { prog(0, stop ? "中止しました。" : `⚠️ AIモデルを読み込めませんでした。［理由：${loadErr || "不明"}］`); return finish(lock); }
     const step = +$("#findStep").value;
     for (let fi = 0; fi < files.length && !stop; fi++) {
-      const f = files[fi], url = URL.createObjectURL(f), base = `${fi + 1}/${files.length}「${f.name}」`;
+      const f = files[fi], base = `${fi + 1}/${files.length}「${f.name}」`;
       try {
-        if (f.type.startsWith("image/")) {
+        if (isImage(f)) {
           prog(fi / files.length, `${base} を調べています`);
-          const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-          drawWork(img, img.naturalWidth, img.naturalHeight);
-          const a = analyse(m);
-          if (a) { const L = label(a); results.push({ name: f.name, t: null, ...a, ...L, thumb: thumb(), src: { kind: "image", img } }); render(); }
+          const { img, url } = await openImage(f);
+          drawWork(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(url);
+          let a = null; try { a = analyse(m); } catch (e) { console.warn(e); }
+          if (a) { results.push({ name: f.name, file: f, t: null, ...a, ...label(a), thumb: thumb() }); render(); }
         } else {
-          const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
-          await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error("この動画は読み込めません")); });
-          const dur = v.duration || 0, list = [];
-          for (let t = 0; t < dur && !stop; t += step) {
-            await seek(v, t);
-            drawWork(v, v.videoWidth, v.videoHeight);
-            const a = analyse(m);
-            if (a) { a.t = t; a.thumb = thumb(); list.push(a); }
-            prog((fi + t / dur) / files.length, `${base} ${mmss(t)} / ${mmss(dur)}　見つかった場面 ${results.length + list.length > 0 ? "…" : "0"}`);
-            await new Promise(r => setTimeout(r, 0));
-          }
-          motion(list);
-          // group consecutive frames with the same category; keep the best-scored frame of each group
-          let cur = null;
-          const flush = () => { if (cur) { results.push(cur.best); cur = null; } };
+          const { v, url, dur } = await openVideo(f), list = [], t0 = performance.now();
+          if (dur / step > 600) prog(fi / files.length, `${base}：長い動画です（${mmss(dur)}）。時間がかかるので、画面を消さずにお待ちください。`);
+          try {
+            for (let t = 0; t < dur && !stop; t += step) {
+              try { await seek(v, t); } catch (e) { continue; }
+              drawWork(v, v.videoWidth, v.videoHeight);
+              let a = null; try { a = analyse(m); } catch (e) { console.warn("frame", t, e); }
+              if (a) { a.t = t; a.thumb = thumb(); list.push(a); }
+              const done = t / dur, el = (performance.now() - t0) / 1000, eta = done > .02 ? el / done * (1 - done) : 0;
+              prog((fi + done) / files.length, `${base} ${mmss(t)} / ${mmss(dur)}　候補 ${results.length + list.length}${eta ? `　残り約${Math.ceil(eta / 60)}分` : ""}`);
+              await pause(0);
+            }
+          } finally { closeVideo(v, url); }
+          motion(list, work.width, work.height);
+          let cur = null; const kept = new Set();
+          const flush = () => { if (cur) { results.push(cur.best); kept.add(cur.best); cur = null; } };
           for (const a of list) {
-            const L = label(a), it = { name: f.name, ...a, ...L, src: { kind: "video", video: v } };
+            const L = label(a), it = Object.assign(a, { name: f.name, file: f }, L);
             if (cur && cur.cat === L.cat && a.t - cur.last <= step * 2.5) { cur.last = a.t; if (it.score > cur.best.score) cur.best = it; }
             else { flush(); cur = { cat: L.cat, last: a.t, best: it }; }
           }
-          flush(); render();
+          flush(); list.forEach(a => { if (!kept.has(a)) a.thumb = null; });
+          render();
         }
-      } catch (e) { console.warn(e); prog(fi / files.length, `${base}：${e.message || "読み込めませんでした"}（HEICやHDR動画はiPhoneのSafariで試してください）`); await new Promise(r => setTimeout(r, 1200)); }
+      } catch (e) { console.warn(e); prog(fi / files.length, `${base}：${e.message || "読み込めませんでした"}（HEICやHDR動画はiPhoneのSafariで試してください）`); await pause(1500); }
     }
     prog(1, `${stop ? "中止しました。" : "完了。"}見つかった場面：${results.length}件`);
-    busy = false; $("#findStop").style.display = "none"; render();
+    finish(lock);
   }
+  function finish(lock) { busy = false; $("#findStop").style.display = "none"; try { lock && lock.release(); } catch (e) {} render(); }
 
   function render() {
     const counts = {}; results.forEach(r => counts[r.cat] = (counts[r.cat] || 0) + 1);
+    if (filter !== "すべて" && !counts[filter]) filter = "すべて";
     const chips = $(".findChips"); chips.innerHTML = "";
     if (!results.length) { $(".findGrid").innerHTML = ""; $(".findSaveRow").style.display = "none"; $(".findHint").style.display = "none"; return; }
     for (const c of ["すべて", ...CATS]) {
@@ -1296,45 +1329,57 @@ const Finder = (() => {
       b.onclick = () => { filter = c; render(); }; chips.appendChild(b);
     }
     const grid = $(".findGrid"); grid.innerHTML = "";
-    results.forEach((r, i) => {
+    results.forEach(r => {
       if (filter !== "すべて" && r.cat !== filter) return;
       const d = document.createElement("div"); d.className = "fcard" + (r.sel ? " sel" : "");
       d.innerHTML = `<img alt=""><div class="fi"><div class="fc"></div><div class="fn"></div></div>`;
-      d.querySelector("img").src = r.thumb;
+      if (r.thumb) d.querySelector("img").src = r.thumb;
       d.querySelector(".fc").textContent = (r.sel ? "✅ " : "") + r.cat;
       d.querySelector(".fn").textContent = `${r.name}${r.t != null ? " " + mmss(r.t) : ""}${r.basis ? "｜" + r.basis : ""}`;
-      d.onclick = () => { r.sel = !r.sel; render(); };
+      d.onclick = () => { r.sel = !r.sel; ready = null; render(); };
       grid.appendChild(d);
     });
-    const n = results.filter(r => r.sel).length;
-    $("#findSave").textContent = `💾 選んだ画像を保存（${n}枚）`; $("#findSave").disabled = !n;
+    const n = results.filter(r => r.sel).length, btn = $("#findSave");
+    btn.textContent = ready ? `📤 ${ready.length}枚を保存する（もう一度タップ）` : `💾 選んだ画像を保存（${n}枚）`;
+    btn.disabled = busy || !n;
     $(".findSaveRow").style.display = "flex"; $(".findHint").style.display = "block";
   }
-
+  function downloadAll(files) {
+    files.forEach((f, i) => setTimeout(() => { const a = document.createElement("a"), u = URL.createObjectURL(f);
+      a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 10000); }, i * 300));
+  }
   async function save() {
-    const sel = results.filter(r => r.sel); if (!sel.length) return;
-    const btn = $("#findSave"); btn.disabled = true; btn.textContent = "画像を作っています…";
-    const files = [];
-    for (const r of sel) {
-      const blob = await frameBlob(r.src, r.t);
-      const nm = `${r.cat}_${r.name.replace(/\.[^.]+$/, "")}${r.t != null ? "_" + mmss(r.t).replace(":", "m") + "s" : ""}.jpg`.replace(/[\\/:*?"<>|]/g, "_");
-      files.push(new File([blob], nm, { type: "image/jpeg" }));
+    const btn = $("#findSave");
+    if (ready) {                         // 2nd tap: share right away inside the tap
+      const files = ready; ready = null;
+      try {
+        if (navigator.canShare && navigator.canShare({ files })) await navigator.share({ files });
+        else downloadAll(files);
+        prog(1, `💾 ${files.length}枚を保存に回しました。`);
+      } catch (e) { if (!e || e.name !== "AbortError") prog(1, "⚠️ 保存できませんでした：" + ((e && e.message) || e)); }
+      render(); return;
     }
+    const sel = results.filter(r => r.sel); if (!sel.length) return;
+    btn.disabled = true; btn.textContent = "画像を作っています…";
     try {
-      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: "ライディング場面" }); }
-      else {
-        for (const f of files) { const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 300)); }
+      const files = [], used = new Set();
+      for (const [i, r] of sel.entries()) {
+        const blob = await frameBlob(r);
+        let nm = `${r.cat}_${r.name.replace(/\.[^.]+$/, "")}${r.t != null ? "_" + mmss(r.t).replace(":", "m") + "s" : ""}`.replace(/[\\/:*?"<>|（）]/g, "_").normalize("NFC");
+        if (used.has(nm)) nm += `_${i + 1}`; used.add(nm);
+        files.push(new File([blob], nm + ".jpg", { type: "image/jpeg" }));
       }
-      prog(1, `💾 ${files.length}枚を保存に回しました。`);
-    } catch (e) { if (e && e.name !== "AbortError") prog(1, "⚠️ 保存できませんでした：" + (e.message || e)); }
+      if (navigator.canShare && navigator.canShare({ files })) { ready = files; render(); return; }
+      downloadAll(files); prog(1, `💾 ${files.length}枚を保存に回しました。`);
+    } catch (e) { prog(1, "⚠️ 保存できませんでした：" + ((e && e.message) || e)); }
     render();
   }
 
   document.getElementById("f-find").addEventListener("change", e => { const fs = [...(e.target.files || [])]; e.target.value = ""; if (fs.length) run(fs); });
-  document.getElementById("findStop").addEventListener("click", () => { stop = true; });
+  document.getElementById("findStop").addEventListener("click", () => { stop = true; $(".findMsg").textContent = "中止しています…"; });
   document.getElementById("findAll").addEventListener("click", () => {
-    const vis = results.filter(r => filter === "すべて" || r.cat === filter); const all = vis.every(r => r.sel);
-    vis.forEach(r => r.sel = !all); render(); });
+    const vis = results.filter(r => filter === "すべて" || r.cat === filter), all = vis.every(r => r.sel);
+    vis.forEach(r => r.sel = !all); ready = null; render(); });
   document.getElementById("findSave").addEventListener("click", save);
   return { run };
 })();

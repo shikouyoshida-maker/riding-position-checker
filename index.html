@@ -78,6 +78,18 @@
   .deltas .h { color:var(--sub); font-size:11px; }
   .deltas .up { color:var(--ok); } .deltas .dn { color:var(--ng); }
   h3.sec { font-size:15px; margin:18px 2px 6px; }
+  .findProg .bar { height:8px; background:#2b303b; border-radius:4px; overflow:hidden; margin-top:8px; }
+  .findProg .bar i { display:block; height:100%; width:0; background:var(--body); transition:width .2s; }
+  .findChips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .findChips button { padding:6px 10px; font-size:12px; border-radius:16px; }
+  .findChips button.on { background:var(--body); color:#0b1a22; }
+  .findGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; margin-top:10px; }
+  .fcard { background:#232733; border-radius:10px; overflow:hidden; border:2px solid transparent; cursor:pointer; font-size:11px; line-height:1.5; }
+  .fcard.sel { border-color:var(--ok); }
+  .fcard img { width:100%; display:block; aspect-ratio:4/3; object-fit:cover; background:#000; }
+  .fcard .fi { padding:5px 7px; }
+  .fcard .fc { font-weight:800; font-size:12px; color:var(--tri); }
+  select { background:#2b303b; color:var(--text); border:0; border-radius:8px; padding:6px; font-size:14px; }
 </style>
 </head>
 <body>
@@ -194,6 +206,28 @@
   </div>
   <img id="outImg" alt="保存用画像">
   <div class="note" id="outNote" style="display:none">↑ 画像を長押しして「写真に保存」できます。</div>
+
+  <!-- ===== 場面さがし ===== -->
+  <section class="view" id="v-find">
+    <div class="vhead">
+      <h2>🎬 場面さがし<span class="tag side">動画・写真から</span></h2>
+      <label class="btn primary" for="f-find">📂 選ぶ</label>
+      <input id="f-find" type="file" accept="video/*,image/*" multiple>
+    </div>
+    <div class="note">走っている動画や写真を選ぶと、AIが<b>正面（左右コーナー・加速・減速・直線）</b>と<b>真横（加速・減速）</b>の場面を探して分けます。ファイルはこの端末の外には送られません。似た場面が続くときは、いちばんよく写った1枚だけを残します。</div>
+    <div class="row">
+      <label class="chk" style="margin:0">動画は <select id="findStep"><option value="0.5">0.5秒</option><option value="1" selected>1秒</option><option value="2">2秒</option></select> ごとに調べる</label>
+    </div>
+    <div class="row"><button id="findStop" style="display:none">■ 中止</button></div>
+    <div class="findProg" style="display:none"><div class="bar"><i></i></div><div class="note findMsg"></div></div>
+    <div class="findChips"></div>
+    <div class="findGrid"></div>
+    <div class="row findSaveRow" style="display:none">
+      <button id="findAll">すべて選ぶ</button>
+      <button id="findSave" class="primaryBtn">💾 選んだ画像を保存（0枚）</button>
+    </div>
+    <div class="note findHint" style="display:none">タップで選択／解除。iPhoneでは保存ボタンのあと「画像を保存」を選ぶと写真アプリに入ります。<br>※ 加速・減速は、動画の速さの変化（「動き」）か、仙骨の向き（「姿勢から推定」）で判定しています。姿勢からの推定は外れることがあります。真横の写真ではコーナーの左右は判定しません。</div>
+  </section>
 
   <h3 class="sec">📺 姿勢の解説動画</h3>
   <div class="vids" id="allVids"></div>
@@ -1102,6 +1136,208 @@ const SIDE = {
   summary: m => ["【横】" + m.verdict, `前傾 ${m.text.lean}`, `目線 ${m.text.gaze.split("（")[0]}`, `頭の位置 ${m.text.headpos}`],
 };
 
+
+// ================= 場面さがし (scene finder) =================
+const Finder = (() => {
+  const $ = q => document.querySelector(q);
+  const CATS = ["正面・左コーナー", "正面・右コーナー", "正面・加速", "正面・減速", "正面・直線", "横・加速", "横・減速", "横・一定"];
+  let results = [], filter = "すべて", stop = false, busy = false;
+  const work = document.createElement("canvas");
+  const prog = (p, msg) => { $(".findProg").style.display = "block"; $(".findProg i").style.width = `${Math.round(p * 100)}%`; if (msg != null) $(".findMsg").textContent = msg; };
+
+  function bikeBox(seg, idx) {
+    const { mask, w, h } = seg; let x0 = w, x1 = -1, y0 = h, y1 = -1, n = 0;
+    const st = Math.max(1, Math.round(Math.min(w, h) / 300));
+    for (let y = 0; y < h; y += st) for (let x = 0; x < w; x += st) if (mask[y * w + x] === idx) { n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (n < (w / st) * (h / st) * .004) return null;
+    return { x0: x0 * seg.sx, x1: (x1 + 1) * seg.sx, y0: y0 * seg.sy, y1: (y1 + 1) * seg.sy, frac: n / ((w / st) * (h / st)) };
+  }
+  function sharpness(cv, b) {   // gradient energy inside the bike box on a small copy
+    const t = document.createElement("canvas"), W = 160, H = Math.max(20, Math.round(160 * (b.y1 - b.y0) / Math.max(1, b.x1 - b.x0)));
+    t.width = W; t.height = Math.min(H, 240);
+    const c = t.getContext("2d"); c.drawImage(cv, b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 0, 0, t.width, t.height);
+    const d = c.getImageData(0, 0, t.width, t.height).data; let e = 0, n = 0;
+    for (let y = 1; y < t.height; y++) for (let x = 1; x < t.width; x++) {
+      const i = (y * t.width + x) * 4, g = d[i] + d[i + 1] + d[i + 2], gl = d[i - 4] + d[i - 3] + d[i - 2], gu = d[i - t.width * 4] + d[i - t.width * 4 + 1] + d[i - t.width * 4 + 2];
+      e += Math.abs(g - gl) + Math.abs(g - gu); n++; }
+    return n ? e / n / 765 : 0;
+  }
+  // analyse one frame already drawn in `work`
+  function analyse(m) {
+    const W = work.width, H = work.height;
+    let P = null, seg = null;
+    try { P = runPose(m, work); } catch (e) {}
+    if (!P) return null;
+    try { seg = runSeg(m, work); } catch (e) { return null; }
+    const b = bikeBox(seg, m.bikeIdx); if (!b) return null;
+    const hip = mid(P(23), P(24)), sh = mid(P(11), P(12));
+    const bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+    // rider must be on the bike
+    if (hip.x < b.x0 - bw * .3 || hip.x > b.x1 + bw * .3 || hip.y < b.y0 - bh * .6 || hip.y > b.y1) return null;
+    const torso = dist(hip, sh) || 1, swr = dist(P(11), P(12)) / torso, asp = bw / bh;
+    let view = null;
+    if (asp > 1.3 || (asp > 1.0 && swr < .35)) view = "side";
+    else if (swr >= .4 && asp < 1.4) view = P(0).v > .6 && (P(2).v > .5 || P(5).v > .5) ? "front" : "rear";
+    if (!view || view === "rear") return null;
+    const vis = [0, 11, 12, 23, 24].reduce((t, i) => t + (P(i).v || 0), 0) / 5;
+    const score = Math.min(1, b.frac * 6) * .4 + vis * .3 + Math.min(1, sharpness(work, b) * 8) * .3;
+    const out = { view, box: b, score, t: 0 };
+    if (view === "front") {
+      const p = FRONT.auto(W, H, P, seg, m, [], () => false);
+      if (p._guess) return null;
+      const fm = FRONT.measure({ pts: p, opt: () => false });
+      out.lean = fm.bike;            // + = top leans to image right = rider's LEFT (rider faces the camera)
+    } else {
+      const p = SIDE.auto(W, H, P, seg, m, []);
+      if (!p._wheelsOk) return null;
+      const sm = SIDE.measure({ pts: p, opt: () => false });
+      out.sac = p._backGuess ? null : sm.sacKey; out.dir = Math.sign(p.front.x - p.rear.x) || 1;
+      out.wb = dist(p.front, p.rear);
+    }
+    return out;
+  }
+  // label from lean / motion / posture
+  function label(f) {
+    if (f.view === "front") {
+      if (Math.abs(f.lean) >= 8) return { cat: f.lean > 0 ? "正面・左コーナー" : "正面・右コーナー", basis: `バンク ${Math.abs(f.lean).toFixed(0)}°` };
+      if (f.acc === "acc") return { cat: "正面・加速", basis: "動き" };
+      if (f.acc === "dec") return { cat: "正面・減速", basis: "動き" };
+      return { cat: "正面・直線", basis: "" };
+    }
+    if (f.acc === "acc") return { cat: "横・加速", basis: "動き" };
+    if (f.acc === "dec") return { cat: "横・減速", basis: "動き" };
+    if (f.sac === "rear") return { cat: "横・加速", basis: "姿勢から推定" };
+    if (f.sac === "front") return { cat: "横・減速", basis: "姿勢から推定" };
+    return { cat: "横・一定", basis: f.acc === "const" ? "動き" : "" };
+  }
+  // motion: speed from consecutive samples (side: bike lengths/s along travel; front: v ∝ d(ln h)/dt / h)
+  function motion(list) {
+    const v = list.map((f, i) => {
+      const g = list[i - 1]; if (!g || g.view !== f.view || f.t - g.t > 3) return null;
+      const dt = f.t - g.t; if (dt <= 0) return null;
+      if (f.view === "side") { const cx = (f.box.x0 + f.box.x1) / 2, gx = (g.box.x0 + g.box.x1) / 2; return ((cx - gx) * f.dir) / dt / Math.max(1, f.wb); }
+      const h = f.box.y1 - f.box.y0, hg = g.box.y1 - g.box.y0; if (h <= 0 || hg <= 0) return null;
+      const gr = Math.log(h / hg) / dt; return gr > 0 ? gr / h * 1000 : null;
+    });
+    list.forEach((f, i) => {
+      const a = v[i - 1], b = v[i + 1];
+      if (a == null || b == null) return;
+      const dt = (list[i + 1].t - list[i - 1].t) || 1, mean = (Math.abs(a) + Math.abs(b)) / 2 || 1e-6;
+      const rel = (b - a) / dt / mean;                // relative change of speed per second
+      if (f.view === "side" && Math.abs(a) < .05 && Math.abs(b) < .05) return;   // panning camera: no usable motion
+      f.acc = rel > .15 ? "acc" : rel < -.15 ? "dec" : "const";
+    });
+  }
+  async function frameBlob(src, t) {   // full-resolution JPEG of the chosen frame (max 1920px)
+    const c = document.createElement("canvas");
+    if (src.kind === "image") { const k = Math.min(1, 1920 / Math.max(src.img.naturalWidth, src.img.naturalHeight));
+      c.width = Math.round(src.img.naturalWidth * k); c.height = Math.round(src.img.naturalHeight * k); c.getContext("2d").drawImage(src.img, 0, 0, c.width, c.height); }
+    else { await seek(src.video, t); const k = Math.min(1, 1920 / Math.max(src.video.videoWidth, src.video.videoHeight));
+      c.width = Math.round(src.video.videoWidth * k); c.height = Math.round(src.video.videoHeight * k); c.getContext("2d").drawImage(src.video, 0, 0, c.width, c.height); }
+    return new Promise(r => c.toBlob(r, "image/jpeg", .92));
+  }
+  function seek(v, t) { return new Promise(res => { const done = () => { v.removeEventListener("seeked", done); setTimeout(res, 20); }; v.addEventListener("seeked", done); v.currentTime = Math.min(t, Math.max(0, v.duration - .05)); }); }
+  function drawWork(el, w, h) { const k = Math.min(1, 960 / Math.max(w, h)); work.width = Math.round(w * k); work.height = Math.round(h * k); work.getContext("2d").drawImage(el, 0, 0, work.width, work.height); }
+  function thumb() { const c = document.createElement("canvas"), k = 320 / Math.max(work.width, work.height); c.width = Math.round(work.width * k); c.height = Math.round(work.height * k); c.getContext("2d").drawImage(work, 0, 0, c.width, c.height); return c.toDataURL("image/jpeg", .75); }
+  const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+
+  async function run(files) {
+    if (busy) return; busy = true; stop = false; results = []; render();
+    $("#findStop").style.display = "inline-block"; $(".findSaveRow").style.display = "none";
+    prog(0, "AIを準備中…");
+    const m = await loadModels();
+    if (!m) { prog(0, `⚠️ AIモデルを読み込めませんでした。［理由：${loadErr || "不明"}］`); busy = false; $("#findStop").style.display = "none"; return; }
+    const step = +$("#findStep").value;
+    for (let fi = 0; fi < files.length && !stop; fi++) {
+      const f = files[fi], url = URL.createObjectURL(f), base = `${fi + 1}/${files.length}「${f.name}」`;
+      try {
+        if (f.type.startsWith("image/")) {
+          prog(fi / files.length, `${base} を調べています`);
+          const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+          drawWork(img, img.naturalWidth, img.naturalHeight);
+          const a = analyse(m);
+          if (a) { const L = label(a); results.push({ name: f.name, t: null, ...a, ...L, thumb: thumb(), src: { kind: "image", img } }); render(); }
+        } else {
+          const v = document.createElement("video"); v.muted = true; v.playsInline = true; v.preload = "auto"; v.src = url;
+          await new Promise((res, rej) => { v.onloadedmetadata = res; v.onerror = () => rej(new Error("この動画は読み込めません")); });
+          const dur = v.duration || 0, list = [];
+          for (let t = 0; t < dur && !stop; t += step) {
+            await seek(v, t);
+            drawWork(v, v.videoWidth, v.videoHeight);
+            const a = analyse(m);
+            if (a) { a.t = t; a.thumb = thumb(); list.push(a); }
+            prog((fi + t / dur) / files.length, `${base} ${mmss(t)} / ${mmss(dur)}　見つかった場面 ${results.length + list.length > 0 ? "…" : "0"}`);
+            await new Promise(r => setTimeout(r, 0));
+          }
+          motion(list);
+          // group consecutive frames with the same category; keep the best-scored frame of each group
+          let cur = null;
+          const flush = () => { if (cur) { results.push(cur.best); cur = null; } };
+          for (const a of list) {
+            const L = label(a), it = { name: f.name, ...a, ...L, src: { kind: "video", video: v } };
+            if (cur && cur.cat === L.cat && a.t - cur.last <= step * 2.5) { cur.last = a.t; if (it.score > cur.best.score) cur.best = it; }
+            else { flush(); cur = { cat: L.cat, last: a.t, best: it }; }
+          }
+          flush(); render();
+        }
+      } catch (e) { console.warn(e); prog(fi / files.length, `${base}：${e.message || "読み込めませんでした"}（HEICやHDR動画はiPhoneのSafariで試してください）`); await new Promise(r => setTimeout(r, 1200)); }
+    }
+    prog(1, `${stop ? "中止しました。" : "完了。"}見つかった場面：${results.length}件`);
+    busy = false; $("#findStop").style.display = "none"; render();
+  }
+
+  function render() {
+    const counts = {}; results.forEach(r => counts[r.cat] = (counts[r.cat] || 0) + 1);
+    const chips = $(".findChips"); chips.innerHTML = "";
+    if (!results.length) { $(".findGrid").innerHTML = ""; $(".findSaveRow").style.display = "none"; $(".findHint").style.display = "none"; return; }
+    for (const c of ["すべて", ...CATS]) {
+      const n = c === "すべて" ? results.length : (counts[c] || 0); if (!n) continue;
+      const b = document.createElement("button"); b.textContent = `${c}（${n}）`; if (c === filter) b.className = "on";
+      b.onclick = () => { filter = c; render(); }; chips.appendChild(b);
+    }
+    const grid = $(".findGrid"); grid.innerHTML = "";
+    results.forEach((r, i) => {
+      if (filter !== "すべて" && r.cat !== filter) return;
+      const d = document.createElement("div"); d.className = "fcard" + (r.sel ? " sel" : "");
+      d.innerHTML = `<img alt=""><div class="fi"><div class="fc"></div><div class="fn"></div></div>`;
+      d.querySelector("img").src = r.thumb;
+      d.querySelector(".fc").textContent = (r.sel ? "✅ " : "") + r.cat;
+      d.querySelector(".fn").textContent = `${r.name}${r.t != null ? " " + mmss(r.t) : ""}${r.basis ? "｜" + r.basis : ""}`;
+      d.onclick = () => { r.sel = !r.sel; render(); };
+      grid.appendChild(d);
+    });
+    const n = results.filter(r => r.sel).length;
+    $("#findSave").textContent = `💾 選んだ画像を保存（${n}枚）`; $("#findSave").disabled = !n;
+    $(".findSaveRow").style.display = "flex"; $(".findHint").style.display = "block";
+  }
+
+  async function save() {
+    const sel = results.filter(r => r.sel); if (!sel.length) return;
+    const btn = $("#findSave"); btn.disabled = true; btn.textContent = "画像を作っています…";
+    const files = [];
+    for (const r of sel) {
+      const blob = await frameBlob(r.src, r.t);
+      const nm = `${r.cat}_${r.name.replace(/\.[^.]+$/, "")}${r.t != null ? "_" + mmss(r.t).replace(":", "m") + "s" : ""}.jpg`.replace(/[\\/:*?"<>|]/g, "_");
+      files.push(new File([blob], nm, { type: "image/jpeg" }));
+    }
+    try {
+      if (navigator.canShare && navigator.canShare({ files })) { await navigator.share({ files, title: "ライディング場面" }); }
+      else {
+        for (const f of files) { const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); await new Promise(r => setTimeout(r, 300)); }
+      }
+      prog(1, `💾 ${files.length}枚を保存に回しました。`);
+    } catch (e) { if (e && e.name !== "AbortError") prog(1, "⚠️ 保存できませんでした：" + (e.message || e)); }
+    render();
+  }
+
+  document.getElementById("f-find").addEventListener("change", e => { const fs = [...(e.target.files || [])]; e.target.value = ""; if (fs.length) run(fs); });
+  document.getElementById("findStop").addEventListener("click", () => { stop = true; });
+  document.getElementById("findAll").addEventListener("click", () => {
+    const vis = results.filter(r => filter === "すべて" || r.cat === filter); const all = vis.every(r => r.sel);
+    vis.forEach(r => r.sel = !all); render(); });
+  document.getElementById("findSave").addEventListener("click", save);
+  return { run };
+})();
 // ================= wiring =================
 const front = new View("v-front", "f-front", FRONT);
 const side = new View("v-side", "f-side", SIDE);

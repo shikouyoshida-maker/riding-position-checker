@@ -1651,6 +1651,7 @@ const Finder = (() => {
 // ================= wiring =================
 const front = new View("v-front", "f-front", FRONT);
 const side = new View("v-side", "f-side", SIDE);
+window.rpc = { front, side };   // 使い方の画像づくり・動作確認用
 startLoad().catch(() => {});
 
 const saveBtn = document.getElementById("save"), outImg = document.getElementById("outImg"), outNote = document.getElementById("outNote");

@@ -140,12 +140,6 @@
       </div>
       <label class="chk"><input type="checkbox" class="useHorizon"> 水平線で傾き補正（緑の線を地面に合わせる）</label>
       <label class="chk"><input type="checkbox" class="fromRear"> 真後ろから撮った写真</label>
-      <div class="cmp">
-        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田のフォームと重ねる</label>
-        <div class="sampleChips" style="display:none"></div>
-        <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
-        <div class="note cmpText"></div>
-      </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
@@ -186,12 +180,6 @@
         <span class="k">首（上半身に対して）</span><span data-r="neck">—</span>
         <span class="k">頭の前後位置</span><span data-r="headpos">—</span>
         <span class="k">三角の頂点角（頭）</span><span data-r="apex">—</span>
-      </div>
-      <div class="cmp">
-        <label class="chk"><input type="checkbox" class="overlay"> 👤 吉田のフォームと重ねる</label>
-        <div class="sampleChips" style="display:none"></div>
-        <div class="oprow" style="display:none"><span class="note">薄い</span><input type="range" class="opacity" min="10" max="90" value="50"><span class="note">濃い</span></div>
-        <div class="note cmpText"></div>
       </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button><button class="swap">↔ 前後を入れ替え</button></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
@@ -480,12 +468,12 @@ class View {
       }
       this.draw(); if (!c.classList.contains("overlay")) this.markDirty(); }));
     this.sample = null; this.sampleState = "none"; this.sampleCache = {}; this.sampleId = null; this.samplePicked = false;
-    this.sec.querySelector(".overlay").addEventListener("change", e => {
+    if (this.sec.querySelector(".overlay")) this.sec.querySelector(".overlay").addEventListener("change", e => {
       this.sec.querySelector(".oprow").style.display = e.target.checked ? "flex" : "none";
       this.sec.querySelector(".sampleChips").style.display = e.target.checked ? "flex" : "none";
       if (e.target.checked) this.initSamples(); else this.draw();
     });
-    this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
+    if (this.sec.querySelector(".opacity")) this.sec.querySelector(".opacity").addEventListener("input", () => this.draw());
     this.prev = null;
     this.recId = null; this.savedOnce = false; this.dirty = false;
     this.sec.querySelector(".okBtn").addEventListener("click", () => this.askSave());
@@ -500,7 +488,7 @@ class View {
     this.cv.addEventListener("pointerup", up); this.cv.addEventListener("pointercancel", up);
   }
   status(t) { this.statusEl.textContent = t; }
-  cmpText(t) { this.sec.querySelector(".cmpText").textContent = t; }
+  cmpText(t) { const el = this.sec.querySelector(".cmpText"); if (el) el.textContent = t; }
   // ---- 履歴 ----
   // 保存は「✅ 角度OK」→「保存する」を押したときだけ
   markDirty() {

@@ -66,6 +66,7 @@
   .recBar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; position:sticky; top:0; background:var(--panel); padding:2px 0 6px; z-index:1; }
   .recBar .note { flex:1; min-width:120px; }
   button.danger { background:#4a2228; color:#ffb4b4; }
+  .okRow .okBtn { background:var(--ok); color:#0b1a10; font-size:16px; padding:12px 18px; }
   .saveAsk { background:#1f3326; border-radius:10px; padding:10px; font-size:14px; line-height:1.6; margin-top:8px; }
   button.primaryBtn { background:var(--ok); color:#0b1a10; }
   .recConfirm { background:#3a1f24; border-radius:10px; padding:10px; font-size:13px; line-height:1.6; }
@@ -106,6 +107,8 @@
       <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
     </div>
     <div class="status"></div>
+    <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK（保存へ）</button></div>
+    <div class="saveAsk" style="display:none"></div>
     <div class="result" style="display:none">
       <div class="verdict">—</div>
       <div class="res">
@@ -123,8 +126,6 @@
         <div class="note cmpText"></div>
       </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button></div>
-      <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK</button></div>
-      <div class="saveAsk" style="display:none"></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
       <div class="legend"><span class="dot" style="background:var(--bike)"></span>バイク<span class="dot" style="background:var(--body)"></span>上半身（腰→肩）<span class="dot" style="background:var(--head)"></span>鼻頭<span class="dot" style="background:var(--ok)"></span>バンク側グリップ（緑の帯＝理想の鼻頭の位置）</div>
@@ -152,6 +153,8 @@
       <div class="row"><button class="closePrev">✕ 比較を閉じる</button></div>
     </div>
     <div class="status"></div>
+    <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK（保存へ）</button></div>
+    <div class="saveAsk" style="display:none"></div>
     <div class="result" style="display:none">
       <div class="verdict">—</div>
       <div class="res">
@@ -169,8 +172,6 @@
         <div class="note cmpText"></div>
       </div>
       <div class="row"><button class="redetect">🔄 自動検出し直す</button><button class="swap">↔ 前後を入れ替え</button></div>
-      <div class="row okRow" style="display:none"><button class="okBtn">✅ 角度OK</button></div>
-      <div class="saveAsk" style="display:none"></div>
       <div class="row"><button class="cmpPrev">📂 以前と比べる</button></div>
       <div class="recList" style="display:none"></div>
       <div class="legend"><span class="dot" style="background:var(--tri)"></span>接地点と頭頂の三角<span class="dot" style="background:var(--sac)"></span>仙骨の向き<span class="dot" style="background:var(--ok)"></span>背中のライン<span class="dot" style="background:var(--body)"></span>上半身<span class="dot" style="background:var(--head)"></span>目線</div>
@@ -414,7 +415,7 @@ class View {
     if (!this.pts) return;
     this.dirty = true;
     this.sec.querySelector(".okRow").style.display = "flex";
-    this.sec.querySelector(".okBtn").textContent = this.savedOnce ? "✅ 角度OK（変更を保存）" : "✅ 角度OK";
+    this.sec.querySelector(".okBtn").textContent = this.savedOnce ? "✅ 角度OK（変更を保存へ）" : "✅ 角度OK（保存へ）";
     this.sec.querySelector(".saveAsk").style.display = "none";
   }
   askSave() {
